@@ -27,6 +27,7 @@ import { ensureStorageDirs, FILES_DIR, THUMBNAILS_DIR } from './services/storage
 import { fileRoutes } from './routes/files.js';
 import { canvasRoutes } from './routes/canvas.js';
 import { searchRoutes } from './routes/search.js';
+import { chatRoutes } from './routes/chat.js';
 import { recoverPendingJobs } from './queue/ingestQueue.js';
 import { ensureCollection } from './services/qdrant.js';
 
@@ -106,6 +107,7 @@ async function bootstrap(): Promise<void> {
   await fastify.register(fileRoutes);
   await fastify.register(canvasRoutes);
   await fastify.register(searchRoutes);
+  await fastify.register(chatRoutes);
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
 

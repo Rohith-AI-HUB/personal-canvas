@@ -1,110 +1,95 @@
-/* ── Reset & Base ──────────────────────────────────────────────────────────── */
-
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body, #root {
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
-/* ── App Layout ────────────────────────────────────────────────────────────── */
+/* ── App Layout ─────────────────────────────────────────────────────────── */
 
 .app-layout {
   display: flex;
+  flex-direction: row;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background: #f8fafc;
+  background: var(--bg-canvas);
 }
+
+/* Sidebar + workspace sit side by side */
 .workspace {
   position: relative;
   flex: 1;
   min-width: 0;
+  height: 100%;
+  overflow: hidden;
 }
+
+/* ── Floating TopBar (centered over canvas) ─────────────────────────────── */
+
 .topbar {
   position: absolute;
   top: 8px;
-  left: 10px;
-  right: 10px;
-  z-index: 40;
+  left: 57%;
+  transform: translateX(-50%);
+  z-index: 500;
+  pointer-events: none;
+  width: calc(100% - 56px);
+  max-width: 600px;
   display: flex;
   justify-content: center;
-  pointer-events: none;
 }
+
 .topbar > * {
   pointer-events: all;
 }
 
-/* ── Canvas container ──────────────────────────────────────────────────────── */
+/* ── Canvas container ────────────────────────────────────────────────────── */
 
 .canvas-container {
-  flex: 1;
+  width: 100%;
+  height: 100%;
   position: relative;
   overflow: hidden;
-  height: 100%;
 }
 
-/* ── tldraw Light Theme & Dotted Canvas ────────────────────────────────────── */
+/* ── tldraw Theme Overrides ──────────────────────────────────────────────── */
 
-/* Force light theme */
-.tl-theme__dark {
-  --color-background: #f8fafc !important;
-}
-
-/* Override tldraw background with dotted grid pattern */
+/* Warm canvas background with subtle dot grid */
 .tl-background {
-  background-color: #f8fafc !important;
-  background-image:
-    radial-gradient(circle, #cbd5e1 1px, transparent 1px) !important;
-  background-size: 24px 24px !important;
+  background-color: var(--bg-canvas) !important;
+  background-image: radial-gradient(
+    circle,
+    rgba(28, 25, 23, 0.09) 1px,
+    transparent 1px
+  ) !important;
+  background-size: 28px 28px !important;
 }
 
-/* Make the canvas area feel cleaner */
 .tl-canvas {
   background: transparent !important;
 }
 
-/* Style tldraw's toolbar to match light theme */
+/* tldraw UI panel theming */
 .tlui-layout {
-  --color-background: #ffffff !important;
-  --color-panel: #ffffff !important;
-  --color-text-0: #0f172a !important;
-  --color-text-1: #334155 !important;
-  --color-text-2: #64748b !important;
-  --color-text-3: #94a3b8 !important;
-  --color-primary: #3b82f6 !important;
-  --color-low-border: #e2e8f0 !important;
-  --color-muted-1: #f1f5f9 !important;
-  --color-muted-2: #f8fafc !important;
+  --color-background:   var(--bg-surface)   !important;
+  --color-panel:        var(--bg-surface)   !important;
+  --color-panel-contrast: var(--bg-surface) !important;
+  --color-text-0:       var(--text-1)       !important;
+  --color-text-1:       var(--text-2)       !important;
+  --color-text-2:       var(--text-3)       !important;
+  --color-text-3:       var(--text-4)       !important;
+  --color-primary:      var(--accent)       !important;
+  --color-low-border:   var(--border)       !important;
+  --color-muted-1:      var(--bg-surface-2) !important;
+  --color-muted-2:      var(--bg-canvas)    !important;
+  --color-shadow:       rgba(20,15,10,0.08) !important;
 }
+
+/* tldraw toolbar / menu positioning */
 .workspace .tlui-menu-zone {
   top: 8px !important;
+  z-index: 400 !important;  /* below .topbar (500) so search bar wins */
 }
 
-/* Spinner animation for sidebar upload */
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.workspace .tlui-toolbar {
+  bottom: 16px !important;
 }
 
-/* Scrollbar styling */
-.app-layout ::-webkit-scrollbar {
-  width: 5px;
-}
-
-.app-layout ::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.app-layout ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 10px;
-}
-
-.app-layout ::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+/* Style tldraw buttons and panels */
+.tlui-button {
+  font-family: 'Inter', system-ui, sans-serif !important;
 }

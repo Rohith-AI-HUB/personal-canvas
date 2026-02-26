@@ -124,6 +124,79 @@ export const api = {
     return request(`/api/search?${params.toString()}`);
   },
 
+  /**
+   * Stream a chat message via SSE.
+   * Returns an AbortController so the caller can cancel mid-stream.
+   */
+  streamChat: (
+    message: string,
+    sessionId: string,
+    onToken: (token: string) => void,
+    onDone: (citations: string[]) => void,
+    onError: (msg: string) => void
+  ): AbortController => {
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const res = await fetch(`${BASE}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message, session_id: sessionId }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          onError(`Server error ${res.status}`);
+          return;
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const raw = line.slice(6).trim();
+            if (!raw) continue;
+
+            let parsed: Record<string, unknown>;
+            try { parsed = JSON.parse(raw); } catch { continue; }
+
+            if (parsed.token) onToken(parsed.token as string);
+            if (parsed.done) onDone((parsed.citations as string[]) ?? []);
+            if (parsed.error) onError(parsed.error as string);
+          }
+        }
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        onError(err instanceof Error ? err.message : 'Connection failed');
+      }
+    })();
+
+    return controller;
+  },
+
+  /** Load prior messages for a session. */
+  getChatHistory: (sessionId: string): Promise<{
+    session_id: string;
+    messages: Array<{
+      id: number;
+      role: 'user' | 'assistant';
+      content: string;
+      citations: string[];
+      created_at: string;
+    }>;
+  }> => request(`/api/chat/history?session_id=${encodeURIComponent(sessionId)}`),
+
   /** Admin endpoint to back-fill semantic vectors. */
   reindexVectors: (): Promise<{
     ok: boolean;

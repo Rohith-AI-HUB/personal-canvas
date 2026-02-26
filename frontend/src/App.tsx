@@ -10,11 +10,12 @@ import './App.css';
 
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
-  const [isMenuOpen, setIsMenuOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const handleFileUploaded = (file: FileRecord) => {
     const editor = editorRef.current;
     if (!editor) return;
+
     fileStore.set(file.id, file);
     const shapeId = createShapeId(file.id);
     if (editor.getShape(shapeId)) return;
@@ -22,8 +23,8 @@ export default function App() {
     editor.createShape({
       id: shapeId,
       type: 'file-card',
-      x: 100 + Math.random() * 300,
-      y: 100 + Math.random() * 200,
+      x: 120 + Math.random() * 320,
+      y: 120 + Math.random() * 200,
       props: { w: CARD_WIDTH, h: CARD_HEIGHT, fileId: file.id, _v: 0 },
       meta: { fileId: file.id },
     } as any);
@@ -31,19 +32,24 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <TopBar
-        getEditor={() => editorRef.current}
-        onMenuToggle={() => setIsMenuOpen(!isMenuOpen)}
-        isMenuOpen={isMenuOpen}
+      {/* Left sidebar */}
+      <Sidebar
+        isOpen={isSidebarOpen}
+        onUpload={handleFileUploaded}
+        onToggle={() => setIsSidebarOpen((v) => !v)}
       />
-      <div className="app-body">
-        <Sidebar isOpen={isMenuOpen} onUpload={handleFileUploaded} />
-        <div className="workspace">
-          <Canvas
-            onFileDropped={handleFileUploaded}
-            onMount={(ed) => { editorRef.current = ed; }}
-          />
+
+      {/* Canvas workspace */}
+      <div className="workspace">
+        {/* Floating search + menu toggle */}
+        <div className="topbar">
+          <TopBar getEditor={() => editorRef.current} />
         </div>
+
+        <Canvas
+          onFileDropped={handleFileUploaded}
+          onMount={(ed) => { editorRef.current = ed; }}
+        />
       </div>
     </div>
   );

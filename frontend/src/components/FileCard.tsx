@@ -8,6 +8,8 @@ import {
 } from '@tldraw/tldraw';
 import type { FileRecord, FileStatus } from '../api';
 
+// ── Shape types ──────────────────────────────────────────────────────────────
+
 export type FileCardShapeProps = {
   w: number;
   h: number;
@@ -17,13 +19,12 @@ export type FileCardShapeProps = {
 
 export type FileCardMeta = {
   fileId: string;
-  aiTitle?: string;       // only present when AI has processed the file
-  summary?: string;       // only present when AI has processed the file
-  tags?: string[];        // empty array until AI completes
+  aiTitle?: string;
+  summary?: string;
+  tags?: string[];
   status?: FileStatus;
-  errorMessage?: string;  // only present on error
+  errorMessage?: string;
   highlightUntil?: number;
-  // All fields must be JSON-serializable (no undefined at runtime) — tldraw enforces this.
 };
 
 export type FileCardShape = TLBaseShape<'file-card', FileCardShapeProps>;
@@ -35,307 +36,391 @@ export const fileCardShapeProps: RecordProps<FileCardShape> = {
   _v: T.number,
 };
 
-export const CARD_WIDTH = 220;
+export const CARD_WIDTH  = 200;
 export const CARD_HEIGHT = 260;
 
-const FILE_ICONS: Record<FileRecord['file_type'], string> = {
-  pdf: '📄',
-  image: '🖼️',
-  video: '🎬',
-  audio: '🎵',
-  code: '💻',
-  text: '📝',
-  other: '📁',
+// ── Type palette — used for gradient covers when no thumbnail exists ──────────
+
+const TYPE_PALETTE: Record<FileRecord['file_type'], {
+  color:     string;     // accent / tag color
+  soft:      string;     // lightest bg
+  medium:    string;     // tag border
+  label:     string;     // display name
+  gradFrom:  string;     // gradient start (light)
+  gradTo:    string;     // gradient end (slightly deeper)
+}> = {
+  pdf:   { color: '#C94F4F', soft: '#FDEAEA', medium: '#F6BDBD', label: 'PDF',   gradFrom: '#FFF0F0', gradTo: '#FDDADA' },
+  image: { color: '#3070C4', soft: '#E8F2FE', medium: '#B8D4F8', label: 'Image', gradFrom: '#EDF5FF', gradTo: '#D3E8FC' },
+  video: { color: '#6B4CC4', soft: '#EFEBFE', medium: '#CFC3F5', label: 'Video', gradFrom: '#F2EEFE', gradTo: '#E0D6FC' },
+  audio: { color: '#0A8FA4', soft: '#E6F8FC', medium: '#A5DDE8', label: 'Audio', gradFrom: '#EAFBFE', gradTo: '#C8EEF5' },
+  code:  { color: '#1A9460', soft: '#E7F7F0', medium: '#A3DEC9', label: 'Code',  gradFrom: '#EDFAF4', gradTo: '#CBF0DF' },
+  text:  { color: '#4D4BB8', soft: '#EEEFFE', medium: '#C4C3F4', label: 'Text',  gradFrom: '#F0EFFF', gradTo: '#DDDCFC' },
+  other: { color: '#6B7785', soft: '#EEF0F4', medium: '#C4CBD4', label: 'File',  gradFrom: '#F4F5F7', gradTo: '#E4E8EC' },
 };
 
-const FILE_COLORS: Record<FileRecord['file_type'], string> = {
-  pdf: '#ef4444',
-  image: '#3b82f6',
-  video: '#8b5cf6',
-  audio: '#06b6d4',
-  code: '#10b981',
-  text: '#6366f1',
-  other: '#94a3b8',
-};
+// ── FileCard Component ───────────────────────────────────────────────────────
 
-const FILE_GRADIENTS: Record<FileRecord['file_type'], string> = {
-  pdf: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-  image: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-  video: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-  audio: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
-  code: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-  text: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
-  other: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)',
-};
-
-interface FileCardComponentProps {
-  file: FileRecord;
-  width: number;
-  height: number;
+interface FileCardProps {
+  file:      FileRecord;
+  width:     number;
+  height:    number;
   shapeMeta?: FileCardMeta;
-  onRetry?: (fileId: string) => void;
+  onRetry?:  (fileId: string) => void;
 }
 
-export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: FileCardComponentProps) {
-  const title = shapeMeta?.aiTitle ?? file.metadata?.ai_title ?? file.filename;
-  const summaryRaw = shapeMeta?.summary ?? file.metadata?.ai_summary ?? '';
-  const summary = summaryRaw.length > 80 ? `${summaryRaw.slice(0, 80).trim()}...` : summaryRaw;
-  const tags = (shapeMeta?.tags ?? file.tags ?? []).filter(Boolean);
-  const status = shapeMeta?.status ?? file.status;
-  const icon = FILE_ICONS[file.file_type] ?? '📁';
-  const accentColor = FILE_COLORS[file.file_type] ?? '#94a3b8';
-  const gradient = FILE_GRADIENTS[file.file_type] ?? FILE_GRADIENTS.other;
-  const pulseActive = (shapeMeta?.highlightUntil ?? 0) > Date.now();
+export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: FileCardProps) {
+  const title      = shapeMeta?.aiTitle ?? file.metadata?.ai_title ?? file.filename;
+  const tags       = (shapeMeta?.tags ?? file.tags ?? []).filter(Boolean);
+  const status     = shapeMeta?.status ?? file.status;
+  const palette    = TYPE_PALETTE[file.file_type] ?? TYPE_PALETTE.other;
+  const isHighlit  = (shapeMeta?.highlightUntil ?? 0) > Date.now();
 
-  const shownTags = tags.slice(0, 5);
-  const hiddenTagCount = Math.max(tags.length - shownTags.length, 0);
   const thumbnailUrl = file.thumbnail_path
     ? `http://127.0.0.1:3001/api/thumbnail?path=${encodeURIComponent(file.thumbnail_path)}`
     : null;
+
+  const hasCover = !!thumbnailUrl;
 
   return (
     <div
       style={{
         width,
         height,
-        borderRadius: 14,
+        borderRadius: 12,
         overflow: 'hidden',
-        background: '#ffffff',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.08)',
         display: 'flex',
         flexDirection: 'column',
-        fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
+        fontFamily: "'Inter', system-ui, sans-serif",
         userSelect: 'none',
-        border: pulseActive ? '2px solid #f59e0b' : '1px solid rgba(0,0,0,0.06)',
-        animation: pulseActive ? 'search-card-pulse 1s ease-out' : undefined,
-        pointerEvents: 'all',
+        position: 'relative',
+        cursor: 'default',
+        boxShadow: isHighlit
+          ? `0 0 0 2.5px ${palette.color}, 0 8px 28px rgba(20,15,10,0.14)`
+          : '0 1px 3px rgba(20,15,10,0.05), 0 4px 14px rgba(20,15,10,0.09)',
+        border: isHighlit
+          ? 'none'
+          : '1px solid rgba(28,25,23,0.08)',
       }}
     >
+      {/* ── Full-card cover: thumbnail OR gradient ── */}
+      <CoverArea
+        hasCover={hasCover}
+        thumbnailUrl={thumbnailUrl}
+        palette={palette}
+        fileType={file.file_type}
+        width={width}
+        height={height}
+      />
+
+      {/* ── Bottom overlay: title + tags, always over the cover ── */}
       <div
         style={{
-          height: Math.round(height * 0.52),
-          flexShrink: 0,
-          position: 'relative',
-          overflow: 'hidden',
-          background: gradient,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {thumbnailUrl ? (
-          <img
-            src={thumbnailUrl}
-            alt={file.filename}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              objectFit: 'cover',
-              objectPosition: 'center',
-              display: 'block',
-            }}
-            onError={(e) => {
-              (e.target as HTMLImageElement).style.display = 'none';
-            }}
-          />
-        ) : null}
-
-        <span
-          style={{
-            fontSize: 40,
-            opacity: 0.95,
-            position: 'relative',
-            zIndex: 1,
-            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
-          }}
-        >
-          {icon}
-        </span>
-
-        <StatusBadge status={status} fileId={file.id} onRetry={onRetry} />
-
-        <div
-          style={{
-            position: 'absolute',
-            bottom: 8,
-            left: 8,
-            background: 'rgba(0,0,0,0.45)',
-            backdropFilter: 'blur(8px)',
-            WebkitBackdropFilter: 'blur(8px)',
-            color: '#fff',
-            fontSize: 9,
-            fontWeight: 700,
-            padding: '3px 8px',
-            borderRadius: 6,
-            textTransform: 'uppercase',
-            letterSpacing: '0.8px',
-            zIndex: 2,
-          }}
-        >
-          {file.file_type}
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: '10px 12px',
-          flex: 1,
-          overflow: 'hidden',
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          padding: '28px 11px 10px',
+          background: hasCover
+            ? 'linear-gradient(to top, rgba(12,10,8,0.72) 0%, rgba(12,10,8,0.30) 65%, transparent 100%)'
+            : 'linear-gradient(to top, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.60) 65%, transparent 100%)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 4,
+          gap: 5,
         }}
       >
+        {/* Title */}
         <div
           style={{
             fontSize: 12,
             fontWeight: 600,
-            color: '#1e293b',
+            color: hasCover ? '#FFFFFF' : '#1C1917',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
-            lineHeight: '1.3',
             letterSpacing: '-0.01em',
+            lineHeight: 1.3,
+            textShadow: hasCover ? '0 1px 4px rgba(0,0,0,0.5)' : 'none',
           }}
           title={title}
         >
           {title}
         </div>
 
-        {summary && (
-          <div
-            style={{
-              fontSize: 10,
-              color: '#64748b',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              lineHeight: '1.45',
-            }}
-            title={summaryRaw}
-          >
-            {summary}
-          </div>
-        )}
-
+        {/* Tags row */}
         {tags.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 'auto' }}>
-            {shownTags.map((tag) => (
+          <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 3, overflow: 'hidden' }}>
+            {tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
                 style={{
                   fontSize: 9,
-                  background: `${accentColor}14`,
-                  color: accentColor,
-                  border: `1px solid ${accentColor}30`,
-                  borderRadius: 4,
-                  padding: '1px 6px',
                   fontWeight: 600,
-                  letterSpacing: '0.02em',
+                  letterSpacing: '0.01em',
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  whiteSpace: 'nowrap',
+                  background: hasCover
+                    ? 'rgba(255,255,255,0.18)'
+                    : palette.soft,
+                  color: hasCover
+                    ? 'rgba(255,255,255,0.90)'
+                    : palette.color,
+                  border: hasCover
+                    ? '1px solid rgba(255,255,255,0.22)'
+                    : `1px solid ${palette.medium}`,
+                  backdropFilter: hasCover ? 'blur(4px)' : 'none',
+                  WebkitBackdropFilter: hasCover ? 'blur(4px)' : 'none',
                 }}
               >
                 {tag}
               </span>
             ))}
-            {hiddenTagCount > 0 && (
+            {tags.length > 3 && (
               <span
                 style={{
                   fontSize: 9,
-                  background: '#f1f5f9',
-                  color: '#64748b',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: 4,
-                  padding: '1px 6px',
                   fontWeight: 600,
-                  letterSpacing: '0.02em',
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  background: hasCover ? 'rgba(255,255,255,0.12)' : '#F0EDE7',
+                  color: hasCover ? 'rgba(255,255,255,0.70)' : '#78716C',
+                  border: hasCover ? '1px solid rgba(255,255,255,0.16)' : '1px solid rgba(28,25,23,0.07)',
                 }}
               >
-                +{hiddenTagCount}
+                +{tags.length - 3}
               </span>
             )}
           </div>
         )}
+      </div>
 
-        {file.file_size && (
-          <div
-            style={{
-              fontSize: 9,
-              color: '#94a3b8',
-              marginTop: 'auto',
-              fontWeight: 500,
-            }}
-          >
-            {formatFileSize(file.file_size)}
-          </div>
-        )}
+      {/* ── Type pill — top left ── */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 9,
+          left: 9,
+          zIndex: 3,
+          background: hasCover
+            ? 'rgba(12,10,8,0.52)'
+            : `${palette.soft}EE`,
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          color: hasCover ? 'rgba(255,255,255,0.88)' : palette.color,
+          fontSize: 8.5,
+          fontWeight: 700,
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          padding: '3px 8px',
+          borderRadius: 5,
+          border: hasCover
+            ? '1px solid rgba(255,255,255,0.14)'
+            : `1px solid ${palette.medium}`,
+        }}
+      >
+        {palette.label}
+      </div>
+
+      {/* ── Status badge — top right ── */}
+      <StatusBadge status={status} fileId={file.id} onRetry={onRetry} hasCover={hasCover} />
+    </div>
+  );
+}
+
+// ── Cover Area ───────────────────────────────────────────────────────────────
+
+function CoverArea({
+  hasCover,
+  thumbnailUrl,
+  palette,
+  fileType,
+  width,
+  height,
+}: {
+  hasCover:     boolean;
+  thumbnailUrl: string | null;
+  palette:      typeof TYPE_PALETTE[keyof typeof TYPE_PALETTE];
+  fileType:     FileRecord['file_type'];
+  width:        number;
+  height:       number;
+}) {
+  if (hasCover) {
+    // Real cover: thumbnail fills the entire card
+    return (
+      <img
+        src={thumbnailUrl!}
+        alt=""
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          objectPosition: 'center top',
+          display: 'block',
+        }}
+        onError={(e) => {
+          // If image fails to load, hide it — the gradient fallback underneath shows
+          (e.target as HTMLImageElement).style.display = 'none';
+        }}
+      />
+    );
+  }
+
+  // No cover: light gradient fill + centered icon
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        background: `linear-gradient(135deg, ${palette.gradFrom} 0%, ${palette.gradTo} 100%)`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      {/* Subtle texture overlay */}
+      <div style={{
+        position: 'absolute',
+        inset: 0,
+        backgroundImage: `radial-gradient(circle at 70% 25%, rgba(255,255,255,0.55) 0%, transparent 60%)`,
+        pointerEvents: 'none',
+      }} />
+
+      {/* Center icon */}
+      <div
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          width: 52,
+          height: 52,
+          borderRadius: 14,
+          background: 'rgba(255,255,255,0.70)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: `0 2px 12px ${palette.medium}80`,
+        }}
+      >
+        <LargeIcon type={fileType} color={palette.color} />
       </div>
     </div>
   );
 }
 
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
+// ── Status Badge ─────────────────────────────────────────────────────────────
 
 function StatusBadge({
   status,
   fileId,
   onRetry,
+  hasCover,
 }: {
-  status: FileStatus;
-  fileId: string;
+  status:   FileStatus;
+  fileId:   string;
   onRetry?: (id: string) => void;
+  hasCover: boolean;
 }) {
-  const badges: Record<FileStatus, { label: string; bg: string; spin?: boolean; clickable?: boolean }> = {
-    pending: { label: '⏳', bg: 'rgba(255,255,255,0.25)' },
-    processing: { label: '⏳', bg: 'rgba(255,255,255,0.25)', spin: true },
-    complete: { label: '✅', bg: 'rgba(16,185,129,0.9)' },
-    error: { label: '⚠️', bg: 'rgba(239,68,68,0.9)', clickable: true },
+  if (status === 'complete') return null;
+
+  const config: Record<Exclude<FileStatus, 'complete'>, {
+    color:     string;
+    icon:      React.ReactNode;
+    title:     string;
+    clickable?: boolean;
+    spin?:     boolean;
+  }> = {
+    pending: {
+      color: '#C27832',
+      icon: <ClockIcon />,
+      title: 'Queued for processing',
+    },
+    processing: {
+      color: '#C27832',
+      icon: <SpinSmIcon />,
+      title: 'Processing…',
+      spin: true,
+    },
+    error: {
+      color: '#C9403C',
+      icon: <WarnIcon />,
+      title: 'Processing failed — click to retry',
+      clickable: true,
+    },
   };
 
-  const badge = badges[status];
-  if (!badge) return null;
+  const c = config[status as Exclude<FileStatus, 'complete'>];
+  if (!c) return null;
 
   return (
     <div
+      className={c.spin ? 'file-status-spin' : undefined}
       style={{
         position: 'absolute',
         top: 8,
         right: 8,
-        background: badge.bg,
+        zIndex: 4,
+        width: 26,
+        height: 26,
+        borderRadius: '50%',
+        background: hasCover ? 'rgba(12,10,8,0.55)' : 'rgba(255,255,255,0.90)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
-        color: '#fff',
-        fontSize: 14,
-        width: 28,
-        height: 28,
-        borderRadius: '50%',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 2,
-        cursor: badge.clickable ? 'pointer' : 'default',
+        color: hasCover ? 'rgba(255,255,255,0.90)' : c.color,
+        boxShadow: '0 1px 4px rgba(0,0,0,0.12)',
+        cursor: c.clickable ? 'pointer' : 'default',
+        border: hasCover
+          ? '1px solid rgba(255,255,255,0.16)'
+          : `1px solid ${c.color}28`,
       }}
-      className={badge.spin ? 'file-status-spin' : undefined}
-      title={status === 'error' ? 'Click to retry AI processing' : status}
+      title={c.title}
       onClick={
-        status === 'error' && onRetry
-          ? (e) => {
-              e.stopPropagation();
-              onRetry(fileId);
-            }
+        c.clickable && onRetry
+          ? (e) => { e.stopPropagation(); onRetry(fileId); }
           : undefined
       }
     >
-      {badge.label}
+      {c.icon}
     </div>
   );
 }
+
+// ── Icons ─────────────────────────────────────────────────────────────────────
+
+function LargeIcon({ type, color }: { type: FileRecord['file_type']; color: string }) {
+  const s: React.CSSProperties = { color };
+  const w = 24, h = 24;
+  switch (type) {
+    case 'pdf':   return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="11" x2="15" y2="11"/></svg>;
+    case 'image': return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
+    case 'video': return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>;
+    case 'audio': return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>;
+    case 'code':  return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>;
+    case 'text':  return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>;
+    default:      return <svg style={s} width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>;
+  }
+}
+
+// Small icons for inline use
+function PdfSvg()   { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="11" x2="15" y2="11"/></svg>; }
+function ImageSvg() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>; }
+function VideoSvg() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>; }
+function AudioSvg() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>; }
+function CodeSvg()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>; }
+function TextSvg()  { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>; }
+function OtherSvg() { return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>; }
+
+function ClockIcon()  { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>; }
+function SpinSmIcon() { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/></svg>; }
+function WarnIcon()   { return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>; }
+
+// ── Exports not used internally but referenced by SVG imports elsewhere ──────
+export { PdfSvg, ImageSvg, VideoSvg, AudioSvg, CodeSvg, TextSvg, OtherSvg };
+
+// ── Shared fileStore ─────────────────────────────────────────────────────────
 
 export const fileStore = new Map<string, FileRecord>();
 
@@ -344,8 +429,10 @@ export function setRetryHandler(fn: (fileId: string) => void) {
   onFileRetry = fn;
 }
 
+// ── tldraw Shape Util ────────────────────────────────────────────────────────
+
 export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
-  static override type = 'file-card' as const;
+  static override type  = 'file-card' as const;
   static override props = fileCardShapeProps;
 
   override getDefaultProps(): FileCardShapeProps {
@@ -354,8 +441,8 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
 
   override getGeometry(shape: FileCardShape) {
     return new Rectangle2d({
-      width: shape.props.w,
-      height: shape.props.h,
+      width:    shape.props.w,
+      height:   shape.props.h,
       isFilled: true,
     });
   }
@@ -364,26 +451,26 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
     const file = fileStore.get(shape.props.fileId);
 
     if (!file) {
+      // Ghost skeleton while file loads
       return (
         <HTMLContainer>
           <div
             style={{
               width: shape.props.w,
               height: shape.props.h,
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #F5F4F2 0%, #ECEAE6 100%)',
+              border: '1px solid rgba(28,25,23,0.07)',
+              boxShadow: '0 1px 3px rgba(20,15,10,0.05), 0 4px 14px rgba(20,15,10,0.09)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: '#f8fafc',
-              borderRadius: 14,
-              color: '#94a3b8',
-              fontSize: 12,
-              border: '1px solid #e2e8f0',
               fontFamily: "'Inter', system-ui, sans-serif",
             }}
           >
-            <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: 24, marginBottom: 6 }}>⏳</div>
-              <div>Loading...</div>
+            <div style={{ textAlign: 'center', color: '#A8A29E', opacity: 0.7 }}>
+              <div style={{ fontSize: 22, marginBottom: 6 }}>⏳</div>
+              <div style={{ fontSize: 10, fontWeight: 500 }}>Loading…</div>
             </div>
           </div>
         </HTMLContainer>
@@ -404,6 +491,6 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
   }
 
   override indicator(shape: FileCardShape) {
-    return <rect width={shape.props.w} height={shape.props.h} rx={14} />;
+    return <rect width={shape.props.w} height={shape.props.h} rx={12} />;
   }
 }

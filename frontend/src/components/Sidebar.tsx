@@ -1,547 +1,901 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, type FileRecord } from '../api';
 
-// ── File type palette ─────────────────────────────────────────────────────────
+// ── File type metadata ──────────────────────────────────────────────────────
 
-const TYPE_COLORS: Record<FileRecord['file_type'], string> = {
-    pdf: '#ef4444',
-    image: '#3b82f6',
-    video: '#8b5cf6',
-    audio: '#06b6d4',
-    code: '#10b981',
-    text: '#6366f1',
-    other: '#94a3b8',
+const TYPE_META: Record<FileRecord['file_type'], { label: string; color: string; soft: string; icon: React.ReactNode }> = {
+  pdf:   { label: 'PDF',   color: 'var(--type-pdf)',   soft: 'var(--type-pdf-soft)',   icon: <PdfIcon /> },
+  image: { label: 'Image', color: 'var(--type-image)', soft: 'var(--type-image-soft)', icon: <ImageIcon /> },
+  video: { label: 'Video', color: 'var(--type-video)', soft: 'var(--type-video-soft)', icon: <VideoIcon /> },
+  audio: { label: 'Audio', color: 'var(--type-audio)', soft: 'var(--type-audio-soft)', icon: <AudioIcon /> },
+  code:  { label: 'Code',  color: 'var(--type-code)',  soft: 'var(--type-code-soft)',  icon: <CodeIcon /> },
+  text:  { label: 'Text',  color: 'var(--type-text)',  soft: 'var(--type-text-soft)',  icon: <TextIcon /> },
+  other: { label: 'Other', color: 'var(--type-other)', soft: 'var(--type-other-soft)', icon: <OtherIcon /> },
 };
 
-const TYPE_ICONS: Record<FileRecord['file_type'], string> = {
-    pdf: '📄',
-    image: '🖼️',
-    video: '🎬',
-    audio: '🎵',
-    code: '💻',
-    text: '📝',
-    other: '📁',
-};
-
-// ── Sidebar Component ─────────────────────────────────────────────────────────
+// ── Sidebar Component ──────────────────────────────────────────────────────
 
 interface SidebarProps {
-    onUpload?: (file: FileRecord) => void;
-    isOpen?: boolean;
+  onUpload?: (file: FileRecord) => void;
+  isOpen?: boolean;
+  onToggle?: () => void;
 }
 
-export function Sidebar({ onUpload, isOpen = true }: SidebarProps) {
-    const [files, setFiles] = useState<FileRecord[]>([]);
-    const [collapsed, setCollapsed] = useState(!isOpen);
-    const [uploading, setUploading] = useState(false);
-    const [dragOver, setDragOver] = useState(false);
-    const [searchQuery, setSearchQuery] = useState('');
-    const fileInputRef = useRef<HTMLInputElement>(null);
+export function Sidebar({ onUpload, isOpen = true, onToggle }: SidebarProps) {
+  const [files, setFiles] = useState<FileRecord[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-    // Update collapsed state when isOpen prop changes
-    useEffect(() => {
-        setCollapsed(!isOpen);
-    }, [isOpen]);
+  // Periodic file list refresh
+  useEffect(() => {
+    let cancelled = false;
 
-    // Fetch file list on mount + refresh periodically
-    useEffect(() => {
-        let cancelled = false;
-
-        async function loadFiles() {
-            try {
-                const list = await api.listFiles();
-                if (!cancelled) setFiles(list);
-            } catch (err) {
-                console.error('Sidebar: failed to load files', err);
-            }
-        }
-
-        loadFiles();
-        const timer = setInterval(loadFiles, 5000);
-        return () => { cancelled = true; clearInterval(timer); };
-    }, []);
-
-    const handleFileInput = async (fileList: FileList | null) => {
-        if (!fileList || fileList.length === 0) return;
-        setUploading(true);
-        try {
-            for (const file of Array.from(fileList)) {
-                const result = await api.uploadFile(file);
-                if (!result.duplicate) {
-                    onUpload?.(result.file);
-                    setFiles((prev) => [result.file, ...prev]);
-                }
-            }
-        } catch (err) {
-            console.error('Upload failed:', err);
-        } finally {
-            setUploading(false);
-        }
-    };
-
-    const handleDrop = async (e: React.DragEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDragOver(false);
-        await handleFileInput(e.dataTransfer.files);
-    };
-
-    const handleDelete = async (id: string) => {
-        try {
-            await api.deleteFile(id);
-            setFiles((prev) => prev.filter((f) => f.id !== id));
-        } catch (err) {
-            console.error('Delete failed:', err);
-        }
-    };
-
-    const filtered = files.filter((f) =>
-        f.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        f.file_type.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (f.metadata?.ai_title ?? '').toLowerCase().includes(searchQuery.toLowerCase())
-    );
-
-    const typeStats = files.reduce((acc, f) => {
-        acc[f.file_type] = (acc[f.file_type] || 0) + 1;
-        return acc;
-    }, {} as Record<string, number>);
-
-    if (collapsed) {
-        return (
-            <div style={styles.collapsedBar}>
-                <button
-                    style={styles.expandBtn}
-                    onClick={() => setCollapsed(false)}
-                    title="Expand sidebar"
-                >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M9 18l6-6-6-6" />
-                    </svg>
-                </button>
-                <div style={styles.collapsedIcons}>
-                    {files.slice(0, 8).map((f) => (
-                        <div key={f.id} style={styles.collapsedDot} title={f.filename}>
-                            <span style={{ fontSize: 14 }}>{TYPE_ICONS[f.file_type]}</span>
-                        </div>
-                    ))}
-                    {files.length > 8 && (
-                        <div style={{ ...styles.collapsedDot, fontSize: 10, color: '#94a3b8' }}>
-                            +{files.length - 8}
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
+    async function loadFiles() {
+      try {
+        const list = await api.listFiles();
+        if (!cancelled) setFiles(list);
+      } catch (err) {
+        console.error('Sidebar: failed to load files', err);
+      }
     }
 
-    return (
-        <div style={styles.sidebar}>
-            {/* ── Header ── */}
-            <div style={styles.header}>
-                <div style={styles.headerLeft}>
-                    <div style={styles.logo}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5">
-                            <rect x="3" y="3" width="7" height="7" rx="1.5" />
-                            <rect x="14" y="3" width="7" height="7" rx="1.5" />
-                            <rect x="3" y="14" width="7" height="7" rx="1.5" />
-                            <rect x="14" y="14" width="7" height="7" rx="1.5" />
-                        </svg>
-                    </div>
-                    <div>
-                        <div style={styles.title}>Canvas</div>
-                        <div style={styles.subtitle}>{files.length} file{files.length !== 1 ? 's' : ''}</div>
-                    </div>
-                </div>
-                <button
-                    style={styles.collapseBtn}
-                    onClick={() => setCollapsed(true)}
-                    title="Collapse sidebar"
-                >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M15 18l-6-6 6-6" />
-                    </svg>
-                </button>
-            </div>
+    loadFiles();
+    const timer = setInterval(loadFiles, 5000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
-            {/* ── Upload zone ── */}
-            <div
+  const handleFileInput = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        const result = await api.uploadFile(file);
+        if (!result.duplicate) {
+          onUpload?.(result.file);
+          setFiles((prev) => [result.file, ...prev]);
+        }
+      }
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    await handleFileInput(e.dataTransfer.files);
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await api.deleteFile(id);
+      setFiles((prev) => prev.filter((f) => f.id !== id));
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
+  };
+
+  // Filtered file list
+  const filtered = files.filter((f) => {
+    const matchesType = !activeTypeFilter || f.file_type === activeTypeFilter;
+    const q = searchQuery.toLowerCase();
+    const matchesSearch = !q ||
+      f.filename.toLowerCase().includes(q) ||
+      (f.metadata?.ai_title ?? '').toLowerCase().includes(q) ||
+      (f.metadata?.ai_category ?? '').toLowerCase().includes(q) ||
+      f.tags.some((t) => t.toLowerCase().includes(q));
+    return matchesType && matchesSearch;
+  });
+
+  // Count files per type
+  const typeStats = files.reduce((acc, f) => {
+    acc[f.file_type] = (acc[f.file_type] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const processingCount = files.filter((f) => f.status === 'processing' || f.status === 'pending').length;
+  const errorCount = files.filter((f) => f.status === 'error').length;
+
+  // ── Collapsed rail ────────────────────────────────────────────────────────
+
+  if (!isOpen) {
+    return (
+      <div style={collapsedStyles.rail}>
+        {/* App logo mark */}
+        <div style={collapsedStyles.logoMark}>
+          <LogoMark />
+        </div>
+
+        <div style={collapsedStyles.divider} />
+
+        {/* Expand button */}
+        <button style={collapsedStyles.iconBtn} onClick={onToggle} title="Open sidebar">
+          <ChevronRightIcon />
+        </button>
+
+        {/* File type dots */}
+        <div style={collapsedStyles.dotList}>
+          {Object.entries(typeStats).map(([type, count]) => {
+            const meta = TYPE_META[type as FileRecord['file_type']];
+            return (
+              <div
+                key={type}
                 style={{
-                    ...styles.uploadZone,
-                    ...(dragOver ? styles.uploadZoneActive : {}),
+                  ...collapsedStyles.typeDot,
+                  background: meta.soft,
+                  color: meta.color,
                 }}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-            >
-                <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    style={{ display: 'none' }}
-                    onChange={(e) => handleFileInput(e.target.files)}
-                />
-                {uploading ? (
-                    <div style={styles.uploadingLabel}>
-                        <div style={styles.spinner} />
-                        Uploading…
-                    </div>
-                ) : (
-                    <>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        <span style={styles.uploadText}>Drop files or click to upload</span>
-                    </>
-                )}
-            </div>
-
-            {/* ── Type filter pills ── */}
-            {Object.keys(typeStats).length > 0 && (
-                <div style={styles.typePills}>
-                    {Object.entries(typeStats).map(([type, count]) => (
-                        <div
-                            key={type}
-                            style={{
-                                ...styles.pill,
-                                background: `${TYPE_COLORS[type as FileRecord['file_type']]}12`,
-                                color: TYPE_COLORS[type as FileRecord['file_type']],
-                                borderColor: `${TYPE_COLORS[type as FileRecord['file_type']]}30`,
-                            }}
-                        >
-                            {TYPE_ICONS[type as FileRecord['file_type']]} {count}
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {/* ── Search ── */}
-            <div style={styles.searchWrap}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" style={{ flexShrink: 0 }}>
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="M21 21l-4.35-4.35" />
-                </svg>
-                <input
-                    type="text"
-                    placeholder="Search files…"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    style={styles.searchInput}
-                />
-            </div>
-
-            {/* ── File list ── */}
-            <div style={styles.fileList}>
-                {filtered.length === 0 && (
-                    <div style={styles.emptyState}>
-                        {searchQuery ? 'No matches found' : 'No files yet — drop some on the canvas!'}
-                    </div>
-                )}
-                {filtered.map((file) => (
-                    <FileListItem key={file.id} file={file} onDelete={handleDelete} />
-                ))}
-            </div>
+                title={`${meta.label} — ${count} file${count !== 1 ? 's' : ''}`}
+              >
+                {meta.icon}
+              </div>
+            );
+          })}
         </div>
+
+        {/* Status indicators at bottom */}
+        {(processingCount > 0 || errorCount > 0) && (
+          <div style={collapsedStyles.statusArea}>
+            {processingCount > 0 && (
+              <div style={{ ...collapsedStyles.statusDot, background: 'var(--color-warning-soft)', color: 'var(--color-warning)' }} title={`${processingCount} processing`}>
+                <SpinnerIcon />
+              </div>
+            )}
+            {errorCount > 0 && (
+              <div style={{ ...collapsedStyles.statusDot, background: 'var(--color-error-soft)', color: 'var(--color-error)' }} title={`${errorCount} errors`}>
+                <WarningIcon />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     );
-}
+  }
 
-// ── File List Item ────────────────────────────────────────────────────────────
+  // ── Expanded sidebar ──────────────────────────────────────────────────────
 
-function FileListItem({ file, onDelete }: { file: FileRecord; onDelete: (id: string) => void }) {
-    const [hovered, setHovered] = useState(false);
-    const icon = TYPE_ICONS[file.file_type];
-    const color = TYPE_COLORS[file.file_type];
-    const title = file.metadata?.ai_title ?? file.filename;
+  return (
+    <div style={sidebarStyles.root}>
 
-    return (
+      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      <div style={sidebarStyles.header}>
+        <div style={sidebarStyles.logoRow}>
+          <div style={sidebarStyles.logoWrap}>
+            <LogoMark />
+          </div>
+          <div>
+            <div style={sidebarStyles.appName}>Canvas</div>
+            <div style={sidebarStyles.appSub}>
+              {files.length} file{files.length !== 1 ? 's' : ''}
+              {processingCount > 0 && (
+                <span style={sidebarStyles.processingBadge}>
+                  <span style={{ display: 'inline-block' }} className="spin">
+                    <SpinnerMiniIcon />
+                  </span>
+                  {processingCount}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <button style={sidebarStyles.collapseBtn} onClick={onToggle} title="Collapse sidebar">
+          <ChevronLeftIcon />
+        </button>
+      </div>
+
+      {/* ── Upload Zone ────────────────────────────────────────────────────── */}
+      <div style={sidebarStyles.uploadSection}>
         <div
-            style={{
-                ...styles.fileItem,
-                background: hovered ? '#f1f5f9' : 'transparent',
-            }}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
+          style={{
+            ...sidebarStyles.dropZone,
+            ...(dragOver ? sidebarStyles.dropZoneActive : {}),
+          }}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+          role="button"
+          tabIndex={0}
+          aria-label="Upload files"
         >
-            <div style={{ ...styles.fileIcon, background: `${color}14`, color }}>
-                <span style={{ fontSize: 14 }}>{icon}</span>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => handleFileInput(e.target.files)}
+          />
+          {uploading ? (
+            <div style={sidebarStyles.uploadingRow}>
+              <span className="spin" style={{ color: 'var(--accent)', display: 'flex' }}>
+                <SpinnerIcon />
+              </span>
+              <span style={sidebarStyles.uploadingText}>Uploading…</span>
             </div>
-            <div style={styles.fileInfo}>
-                <div style={styles.fileName} title={title}>
-                    {title}
-                </div>
-                <div style={styles.fileMeta}>
-                    {file.file_type.toUpperCase()}
-                    {file.file_size ? ` · ${formatSize(file.file_size)}` : ''}
-                </div>
+          ) : (
+            <div style={sidebarStyles.uploadIdleRow}>
+              <div style={sidebarStyles.uploadIconWrap}>
+                <UploadIcon />
+              </div>
+              <div>
+                <div style={sidebarStyles.uploadPrimary}>Drop files here</div>
+                <div style={sidebarStyles.uploadSecondary}>or click to browse</div>
+              </div>
             </div>
-            {hovered && (
-                <button
-                    style={styles.deleteBtn}
-                    onClick={(e) => { e.stopPropagation(); onDelete(file.id); }}
-                    title="Delete file"
-                >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-                    </svg>
-                </button>
-            )}
-            {file.status !== 'complete' && file.status !== 'error' && (
-                <div style={{ ...styles.statusDot, background: '#f59e0b' }} title={file.status} />
-            )}
-            {file.status === 'error' && (
-                <div style={{ ...styles.statusDot, background: '#ef4444' }} title="Error" />
-            )}
+          )}
         </div>
-    );
+      </div>
+
+      {/* ── Type filter chips ─────────────────────────────────────────────── */}
+      {Object.keys(typeStats).length > 0 && (
+        <div style={sidebarStyles.filterRow}>
+          <button
+            style={{
+              ...sidebarStyles.chip,
+              ...(activeTypeFilter === null ? sidebarStyles.chipActive : {}),
+            }}
+            onClick={() => setActiveTypeFilter(null)}
+          >
+            All
+          </button>
+          {Object.entries(typeStats).map(([type, count]) => {
+            const meta = TYPE_META[type as FileRecord['file_type']];
+            const isActive = activeTypeFilter === type;
+            return (
+              <button
+                key={type}
+                style={{
+                  ...sidebarStyles.chip,
+                  ...(isActive ? {
+                    background: meta.soft,
+                    color: meta.color,
+                    border: `1px solid ${meta.color}30`,
+                  } : {}),
+                }}
+                onClick={() => setActiveTypeFilter(isActive ? null : type)}
+                title={`${meta.label} (${count})`}
+              >
+                {meta.label} {count}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Search ────────────────────────────────────────────────────────── */}
+      <div style={sidebarStyles.searchWrap}>
+        <span style={sidebarStyles.searchIcon}>
+          <SearchIcon />
+        </span>
+        <input
+          type="text"
+          placeholder="Filter files…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={sidebarStyles.searchInput}
+        />
+        {searchQuery && (
+          <button
+            style={sidebarStyles.clearBtn}
+            onClick={() => setSearchQuery('')}
+            aria-label="Clear search"
+          >
+            <CloseSmIcon />
+          </button>
+        )}
+      </div>
+
+      {/* ── File List ─────────────────────────────────────────────────────── */}
+      <div style={sidebarStyles.listHeader}>
+        <span style={sidebarStyles.listHeaderLabel}>
+          {filtered.length > 0 ? `${filtered.length} file${filtered.length !== 1 ? 's' : ''}` : ''}
+        </span>
+        {errorCount > 0 && (
+          <span style={sidebarStyles.errorBadge}>
+            {errorCount} error{errorCount !== 1 ? 's' : ''}
+          </span>
+        )}
+      </div>
+
+      <div style={sidebarStyles.fileList}>
+        {filtered.length === 0 ? (
+          <div style={sidebarStyles.emptyState}>
+            {searchQuery || activeTypeFilter ? (
+              <>
+                <div style={sidebarStyles.emptyIcon}><SearchIcon /></div>
+                <div>No matches found</div>
+              </>
+            ) : (
+              <>
+                <div style={sidebarStyles.emptyIcon}><DropIcon /></div>
+                <div>Drop files onto the canvas</div>
+                <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-4)' }}>PDF, images, video, code & more</div>
+              </>
+            )}
+          </div>
+        ) : (
+          filtered.map((file) => (
+            <FileItem key={file.id} file={file} onDelete={handleDelete} />
+          ))
+        )}
+      </div>
+
+      {/* ── Footer ────────────────────────────────────────────────────────── */}
+      <div style={sidebarStyles.footer}>
+        <div style={sidebarStyles.footerText}>
+          Personal Knowledge Canvas
+        </div>
+      </div>
+
+    </div>
+  );
 }
+
+// ── File List Item ─────────────────────────────────────────────────────────
+
+function FileItem({ file, onDelete }: { file: FileRecord; onDelete: (id: string) => void }) {
+  const [hovered, setHovered] = useState(false);
+  const meta = TYPE_META[file.file_type];
+  const title = file.metadata?.ai_title?.trim() || file.filename;
+  const isProcessing = file.status === 'pending' || file.status === 'processing';
+  const isError = file.status === 'error';
+
+  return (
+    <div
+      style={{
+        ...itemStyles.root,
+        background: hovered ? 'var(--bg-hover)' : 'transparent',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Type icon badge */}
+      <div style={{
+        ...itemStyles.iconBadge,
+        background: meta.soft,
+        color: meta.color,
+      }}>
+        {meta.icon}
+      </div>
+
+      {/* File info */}
+      <div style={itemStyles.info}>
+        <div style={itemStyles.title} title={title}>
+          {title}
+        </div>
+        <div style={itemStyles.meta}>
+          <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 9, fontWeight: 600 }}>
+            {meta.label}
+          </span>
+          {file.file_size ? (
+            <span style={{ marginLeft: 4, color: 'var(--text-5)' }}>· {formatSize(file.file_size)}</span>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Status + actions */}
+      <div style={itemStyles.actions}>
+        {isProcessing && (
+          <span className="spin" style={{ color: 'var(--color-warning)', display: 'flex', alignItems: 'center' }}>
+            <SpinnerMiniIcon />
+          </span>
+        )}
+        {isError && (
+          <span style={{ color: 'var(--color-error)', display: 'flex', fontSize: 11 }} title={file.error_message ?? 'Error'}>
+            <WarningIcon />
+          </span>
+        )}
+        {hovered && (
+          <button
+            style={itemStyles.deleteBtn}
+            onClick={(e) => { e.stopPropagation(); onDelete(file.id); }}
+            title="Remove file"
+          >
+            <TrashIcon />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatSize(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
+// ── Styles ─────────────────────────────────────────────────────────────────
 
-const styles: Record<string, React.CSSProperties> = {
-    sidebar: {
-        width: 280,
-        height: '100%',
-        background: '#ffffff',
-        borderRight: '1px solid #e2e8f0',
-        display: 'flex',
-        flexDirection: 'column',
-        fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
-        overflow: 'hidden',
-        flexShrink: 0,
-        zIndex: 10,
-    },
-    collapsedBar: {
-        width: 52,
-        height: '100%',
-        background: '#ffffff',
-        borderRight: '1px solid #e2e8f0',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        paddingTop: 12,
-        gap: 8,
-        flexShrink: 0,
-        zIndex: 10,
-    },
-    expandBtn: {
-        width: 32,
-        height: 32,
-        border: 'none',
-        background: '#f1f5f9',
-        borderRadius: 8,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: '#475569',
-    },
-    collapsedIcons: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 6,
-        marginTop: 8,
-    },
-    collapsedDot: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        background: '#f8fafc',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    header: {
-        padding: '16px 16px 12px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        borderBottom: '1px solid #f1f5f9',
-    },
-    headerLeft: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-    },
-    logo: {
-        width: 36,
-        height: 36,
-        background: '#eff6ff',
-        borderRadius: 10,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    title: {
-        fontSize: 15,
-        fontWeight: 700,
-        color: '#0f172a',
-        letterSpacing: '-0.02em',
-    },
-    subtitle: {
-        fontSize: 11,
-        color: '#94a3b8',
-        fontWeight: 500,
-    },
-    collapseBtn: {
-        width: 28,
-        height: 28,
-        border: 'none',
-        background: '#f8fafc',
-        borderRadius: 7,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: '#64748b',
-        transition: 'background 0.15s',
-    },
-    uploadZone: {
-        margin: '12px 12px 0',
-        padding: '14px 12px',
-        border: '2px dashed #e2e8f0',
-        borderRadius: 12,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        cursor: 'pointer',
-        transition: 'all 0.2s',
-        background: '#fafbfc',
-    },
-    uploadZoneActive: {
-        borderColor: '#3b82f6',
-        background: '#eff6ff',
-    },
-    uploadText: {
-        fontSize: 12,
-        color: '#64748b',
-        fontWeight: 500,
-    },
-    uploadingLabel: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        fontSize: 12,
-        color: '#3b82f6',
-        fontWeight: 500,
-    },
-    spinner: {
-        width: 14,
-        height: 14,
-        border: '2px solid #e2e8f0',
-        borderTopColor: '#3b82f6',
-        borderRadius: '50%',
-        animation: 'spin 0.8s linear infinite',
-    },
-    typePills: {
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 4,
-        padding: '10px 12px 0',
-    },
-    pill: {
-        fontSize: 10,
-        fontWeight: 600,
-        padding: '3px 8px',
-        borderRadius: 6,
-        border: '1px solid',
-        letterSpacing: '0.02em',
-    },
-    searchWrap: {
-        margin: '10px 12px 0',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '8px 10px',
-        background: '#f8fafc',
-        borderRadius: 8,
-        border: '1px solid #e2e8f0',
-    },
-    searchInput: {
-        flex: 1,
-        border: 'none',
-        outline: 'none',
-        background: 'transparent',
-        fontSize: 12,
-        color: '#334155',
-        fontFamily: 'inherit',
-    },
-    fileList: {
-        flex: 1,
-        overflow: 'auto',
-        padding: '8px 8px',
-    },
-    emptyState: {
-        textAlign: 'center',
-        color: '#94a3b8',
-        fontSize: 12,
-        padding: '24px 16px',
-        lineHeight: '1.5',
-    },
-    fileItem: {
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 8px',
-        borderRadius: 8,
-        cursor: 'default',
-        transition: 'background 0.15s',
-        position: 'relative',
-    },
-    fileIcon: {
-        width: 32,
-        height: 32,
-        borderRadius: 8,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexShrink: 0,
-    },
-    fileInfo: {
-        flex: 1,
-        overflow: 'hidden',
-    },
-    fileName: {
-        fontSize: 12,
-        fontWeight: 600,
-        color: '#1e293b',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-    },
-    fileMeta: {
-        fontSize: 10,
-        color: '#94a3b8',
-        fontWeight: 500,
-        marginTop: 1,
-    },
-    deleteBtn: {
-        width: 28,
-        height: 28,
-        border: 'none',
-        background: '#fef2f2',
-        borderRadius: 6,
-        cursor: 'pointer',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        transition: 'background 0.15s',
-        flexShrink: 0,
-    },
-    statusDot: {
-        width: 8,
-        height: 8,
-        borderRadius: '50%',
-        flexShrink: 0,
-    },
+const sidebarStyles: Record<string, React.CSSProperties> = {
+  root: {
+    width: 268,
+    height: '100%',
+    flexShrink: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    background: 'var(--bg-surface)',
+    borderRight: '1px solid var(--border)',
+    fontFamily: "'Inter', system-ui, sans-serif",
+    overflow: 'hidden',
+    zIndex: 10,
+    // Soft right shadow to lift it above canvas
+    boxShadow: '2px 0 12px rgba(20,15,10,0.04)',
+  },
+
+  // Header
+  header: {
+    padding: '16px 14px 12px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottom: '1px solid var(--border)',
+    flexShrink: 0,
+  },
+  logoRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logoWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--accent-soft)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--accent)',
+    flexShrink: 0,
+  },
+  appName: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: 'var(--text-1)',
+    letterSpacing: '-0.025em',
+    lineHeight: 1.2,
+  },
+  appSub: {
+    fontSize: 11,
+    color: 'var(--text-4)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 1,
+  },
+  processingBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 3,
+    fontSize: 10,
+    color: 'var(--color-warning)',
+    background: 'var(--color-warning-soft)',
+    padding: '1px 5px',
+    borderRadius: 'var(--radius-full)',
+  },
+  collapseBtn: {
+    width: 28,
+    height: 28,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 'var(--radius-sm)',
+    background: 'transparent',
+    color: 'var(--text-4)',
+    transition: 'all var(--transition-fast)',
+    cursor: 'pointer',
+  },
+
+  // Upload zone
+  uploadSection: {
+    padding: '10px 12px 0',
+    flexShrink: 0,
+  },
+  dropZone: {
+    padding: '14px 12px',
+    border: '1.5px dashed var(--border-medium)',
+    borderRadius: 'var(--radius-md)',
+    background: 'var(--bg-canvas)',
+    cursor: 'pointer',
+    transition: 'all var(--transition-base)',
+    userSelect: 'none',
+  },
+  dropZoneActive: {
+    borderColor: 'var(--accent)',
+    background: 'var(--accent-soft)',
+    borderStyle: 'solid',
+  },
+  uploadIdleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+  },
+  uploadIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--accent)',
+    flexShrink: 0,
+    boxShadow: 'var(--shadow-xs)',
+  },
+  uploadPrimary: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: 'var(--text-2)',
+    lineHeight: 1.3,
+  },
+  uploadSecondary: {
+    fontSize: 11,
+    color: 'var(--text-4)',
+    marginTop: 2,
+  },
+  uploadingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+    padding: '4px 0',
+  },
+  uploadingText: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: 'var(--accent)',
+  },
+
+  // Filter chips
+  filterRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 4,
+    padding: '10px 12px 0',
+    flexShrink: 0,
+  },
+  chip: {
+    fontSize: 10,
+    fontWeight: 600,
+    padding: '3px 8px',
+    borderRadius: 'var(--radius-full)',
+    border: '1px solid var(--border)',
+    background: 'var(--bg-canvas)',
+    color: 'var(--text-3)',
+    cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
+    letterSpacing: '0.01em',
+    lineHeight: 1.5,
+  },
+  chipActive: {
+    background: 'var(--accent-soft)',
+    color: 'var(--accent)',
+    border: '1px solid var(--accent-medium)',
+  },
+
+  // Search
+  searchWrap: {
+    margin: '10px 12px 0',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 7,
+    height: 34,
+    padding: '0 10px',
+    background: 'var(--bg-canvas)',
+    borderRadius: 'var(--radius-sm)',
+    border: '1px solid var(--border)',
+    flexShrink: 0,
+  },
+  searchIcon: {
+    color: 'var(--text-4)',
+    display: 'flex',
+    flexShrink: 0,
+  },
+  searchInput: {
+    flex: 1,
+    border: 'none',
+    outline: 'none',
+    background: 'transparent',
+    fontSize: 12,
+    color: 'var(--text-1)',
+    fontFamily: 'inherit',
+  },
+  clearBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--text-4)',
+    cursor: 'pointer',
+    padding: 2,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+
+  // List header
+  listHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '10px 14px 4px',
+    flexShrink: 0,
+  },
+  listHeaderLabel: {
+    fontSize: 10,
+    fontWeight: 600,
+    color: 'var(--text-4)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.06em',
+  },
+  errorBadge: {
+    fontSize: 10,
+    color: 'var(--color-error)',
+    background: 'var(--color-error-soft)',
+    padding: '2px 6px',
+    borderRadius: 'var(--radius-full)',
+    fontWeight: 600,
+  },
+
+  // File list
+  fileList: {
+    flex: 1,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    padding: '2px 6px',
+  },
+  emptyState: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 6,
+    padding: '32px 16px',
+    color: 'var(--text-4)',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 1.4,
+  },
+  emptyIcon: {
+    color: 'var(--text-5)',
+    marginBottom: 2,
+    fontSize: 20,
+  },
+
+  // Footer
+  footer: {
+    padding: '10px 14px',
+    borderTop: '1px solid var(--border)',
+    flexShrink: 0,
+  },
+  footerText: {
+    fontSize: 10,
+    color: 'var(--text-5)',
+    fontWeight: 500,
+    letterSpacing: '0.02em',
+  },
 };
+
+const itemStyles: Record<string, React.CSSProperties> = {
+  root: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 9,
+    padding: '7px 8px',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'default',
+    transition: 'background var(--transition-fast)',
+    userSelect: 'none',
+  },
+  iconBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 'var(--radius-sm)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  info: {
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+  },
+  title: {
+    fontSize: 12,
+    fontWeight: 500,
+    color: 'var(--text-1)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    lineHeight: 1.3,
+  },
+  meta: {
+    fontSize: 10,
+    color: 'var(--text-3)',
+    marginTop: 1,
+  },
+  actions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    flexShrink: 0,
+  },
+  deleteBtn: {
+    width: 24,
+    height: 24,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 6,
+    background: 'var(--color-error-soft)',
+    color: 'var(--color-error)',
+    cursor: 'pointer',
+    transition: 'background var(--transition-fast)',
+  },
+};
+
+const collapsedStyles: Record<string, React.CSSProperties> = {
+  rail: {
+    width: 52,
+    height: '100%',
+    flexShrink: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    paddingTop: 12,
+    paddingBottom: 12,
+    background: 'var(--bg-surface)',
+    borderRight: '1px solid var(--border)',
+    boxShadow: '2px 0 12px rgba(20,15,10,0.04)',
+    zIndex: 10,
+    gap: 6,
+  },
+  logoMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 'var(--radius-sm)',
+    background: 'var(--accent-soft)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--accent)',
+    flexShrink: 0,
+    marginBottom: 2,
+  },
+  divider: {
+    width: 28,
+    height: 1,
+    background: 'var(--border)',
+    margin: '4px 0',
+  },
+  iconBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 'var(--radius-sm)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'transparent',
+    color: 'var(--text-4)',
+    cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
+  },
+  dotList: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 4,
+    flex: 1,
+  },
+  typeDot: {
+    width: 32,
+    height: 32,
+    borderRadius: 'var(--radius-sm)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+    marginTop: 'auto',
+  },
+  statusDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 'var(--radius-sm)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+};
+
+// ── SVG Icons (inline, no deps) ────────────────────────────────────────────
+
+function LogoMark() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1" y="1" width="6.5" height="6.5" rx="1.5" fill="currentColor" opacity="0.9" />
+      <rect x="10.5" y="1" width="6.5" height="6.5" rx="1.5" fill="currentColor" opacity="0.6" />
+      <rect x="1" y="10.5" width="6.5" height="6.5" rx="1.5" fill="currentColor" opacity="0.6" />
+      <rect x="10.5" y="10.5" width="6.5" height="6.5" rx="1.5" fill="currentColor" opacity="0.4" />
+    </svg>
+  );
+}
+
+function PdfIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/><line x1="9" y1="11" x2="15" y2="11"/></svg>;
+}
+
+function ImageIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>;
+}
+
+function VideoIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>;
+}
+
+function AudioIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>;
+}
+
+function CodeIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>;
+}
+
+function TextIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/></svg>;
+}
+
+function OtherIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>;
+}
+
+function ChevronLeftIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>;
+}
+
+function ChevronRightIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>;
+}
+
+function SearchIcon() {
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>;
+}
+
+function CloseSmIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>;
+}
+
+function SpinnerIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/></svg>;
+}
+
+function SpinnerMiniIcon() {
+  return <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" strokeLinecap="round"/></svg>;
+}
+
+function WarningIcon() {
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>;
+}
+
+function UploadIcon() {
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;
+}
+
+function DropIcon() {
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 17l4-5 4 5"/><path d="M12 12V3"/><rect x="3" y="14" width="18" height="7" rx="2" strokeDasharray="3 2"/></svg>;
+}
+
+function TrashIcon() {
+  return <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>;
+}

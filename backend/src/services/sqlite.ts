@@ -147,6 +147,46 @@ function migrateLegacyContentlessFts(db: Database.Database): void {
   `);
 }
 
+// ── Chat history helpers ────────────────────────────────────────────────────
+
+export interface ChatMessageRow {
+  id: number;
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations: string | null; // JSON array of file IDs
+  created_at: string;
+}
+
+export function insertChatMessage(
+  sessionId: string,
+  role: 'user' | 'assistant',
+  content: string,
+  citations: string[] = []
+): number {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT INTO chat_messages (session_id, role, content, citations)
+    VALUES (?, ?, ?, ?)
+  `).run(sessionId, role, content, JSON.stringify(citations));
+  return result.lastInsertRowid as number;
+}
+
+export function getSessionHistory(
+  sessionId: string,
+  limit = 10
+): ChatMessageRow[] {
+  const db = getDb();
+  // Fetch last N messages in chronological order
+  return db.prepare(`
+    SELECT id, session_id, role, content, citations, created_at
+    FROM chat_messages
+    WHERE session_id = ?
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(sessionId, limit).reverse() as ChatMessageRow[];
+}
+
 export function closeDb(): void {
   if (db) {
     db.close();
