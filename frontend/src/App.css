@@ -1,3 +1,5 @@
+/* ── Reset & Base ──────────────────────────────────────────────────────────── */
+
 * {
   margin: 0;
   padding: 0;
@@ -8,4 +10,80 @@ html, body, #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+/* ── App Layout ────────────────────────────────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+/* ── Canvas container ──────────────────────────────────────────────────────── */
+
+.canvas-container {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* ── tldraw Light Theme & Dotted Canvas ────────────────────────────────────── */
+
+/* Force light theme */
+.tl-theme__dark {
+  --color-background: #f8fafc !important;
+}
+
+/* Override tldraw background with dotted grid pattern */
+.tl-background {
+  background-color: #f8fafc !important;
+  background-image:
+    radial-gradient(circle, #cbd5e1 1px, transparent 1px) !important;
+  background-size: 24px 24px !important;
+}
+
+/* Make the canvas area feel cleaner */
+.tl-canvas {
+  background: transparent !important;
+}
+
+/* Style tldraw's toolbar to match light theme */
+.tlui-layout {
+  --color-background: #ffffff !important;
+  --color-panel: #ffffff !important;
+  --color-text-0: #0f172a !important;
+  --color-text-1: #334155 !important;
+  --color-text-2: #64748b !important;
+  --color-text-3: #94a3b8 !important;
+  --color-primary: #3b82f6 !important;
+  --color-low-border: #e2e8f0 !important;
+  --color-muted-1: #f1f5f9 !important;
+  --color-muted-2: #f8fafc !important;
+}
+
+/* Spinner animation for sidebar upload */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Scrollbar styling */
+.app-layout ::-webkit-scrollbar {
+  width: 5px;
+}
+
+.app-layout ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.app-layout ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.app-layout ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

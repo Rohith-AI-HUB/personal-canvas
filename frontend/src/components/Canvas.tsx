@@ -7,19 +7,19 @@ import {
   type TLShape,
 } from '@tldraw/tldraw';
 import '@tldraw/tldraw/tldraw.css';
-import { FileCardShapeUtil, fileStore } from './FileCard';
+import { FileCardShapeUtil, fileStore, CARD_WIDTH, CARD_HEIGHT } from './FileCard';
 import { api, type FileRecord, type NodeUpdate } from '../api';
 
 const CUSTOM_SHAPE_UTILS = [FileCardShapeUtil];
 
-// ── Canvas inner — has access to editor via useEditor ────────────────────────
+// ── Canvas Inner ─────────────────────────────────────────────────────────────
 
 function CanvasInner() {
   const editor = useEditor();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimersRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-  // ── Restore canvas state on mount ─────────────────────────────────────────
+  // ── Restore canvas on mount ───────────────────────────────────────────────
 
   useEffect(() => {
     let cancelled = false;
@@ -31,27 +31,28 @@ function CanvasInner() {
 
         for (const file of files) {
           fileStore.set(file.id, file);
-
           const shapeId = createShapeId(file.id);
-
-          // Skip if shape already on canvas (e.g. hot-reload)
           if (editor.getShape(shapeId)) continue;
 
           const x = file.canvas_node?.x ?? Math.random() * 600;
           const y = file.canvas_node?.y ?? Math.random() * 400;
-          const w = file.canvas_node?.width ?? 200;
-          const h = file.canvas_node?.height ?? 250;
+          // Use uniform card dimensions
+          const w = file.canvas_node?.width ?? CARD_WIDTH;
+          const h = file.canvas_node?.height ?? CARD_HEIGHT;
 
           editor.createShape({
             id: shapeId,
             type: 'file-card',
             x,
             y,
-            props: { w, h, fileId: file.id },
+            props: { w, h, fileId: file.id, _v: 0 },
             meta: { fileId: file.id },
-          });
+          } as any);
 
-          // Start polling for non-complete files
+          // FIX: Force re-render after createShape so the fileStore data
+          // is picked up immediately (HTMLContainer otherwise shows stale state)
+          forceShapeUpdate(editor, file.id);
+
           if (file.status !== 'complete' && file.status !== 'error') {
             startPolling(file.id, editor);
           }
@@ -65,25 +66,27 @@ function CanvasInner() {
 
     return () => {
       cancelled = true;
-      // Clear all polling timers
-      for (const timer of pollTimersRef.current.values()) {
-        clearInterval(timer);
-      }
+      for (const timer of pollTimersRef.current.values()) clearInterval(timer);
       pollTimersRef.current.clear();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
 
-  // ── Canvas state persistence (debounced, filtered) ────────────────────────
+  // ── Canvas position persistence (debounced) ───────────────────────────────
 
   useEffect(() => {
     const unsub = editor.store.listen(
       (entry) => {
         const updates: NodeUpdate[] = [];
-
         for (const [, next] of Object.values(entry.changes.updated) as [TLShape, TLShape][]) {
-          if (next.typeName === 'shape' && (next as TLShape & { meta: { fileId?: string } }).meta?.fileId) {
-            const shape = next as TLShape & { props: { w: number; h: number }; meta: { fileId: string } };
+          if (
+            next.typeName === 'shape' &&
+            (next as TLShape & { meta: { fileId?: string } }).meta?.fileId
+          ) {
+            const shape = next as TLShape & {
+              props: { w: number; h: number };
+              meta: { fileId: string };
+            };
             updates.push({
               id: shape.id,
               fileId: shape.meta.fileId,
@@ -94,10 +97,7 @@ function CanvasInner() {
             });
           }
         }
-
         if (updates.length === 0) return;
-
-        // Debounce — write 2s after last change
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
           api.saveCanvasNodes(updates).catch((err) =>
@@ -105,40 +105,27 @@ function CanvasInner() {
           );
         }, 2000);
       },
-      { source: 'user', scope: 'document' } // excludes camera movement
+      { source: 'user', scope: 'document' }
     );
-
     return unsub;
   }, [editor]);
 
-  // ── Polling helper for in-progress files ─────────────────────────────────
+  // ── Status polling ────────────────────────────────────────────────────────
 
   function startPolling(fileId: string, ed: Editor) {
     if (pollTimersRef.current.has(fileId)) return;
 
     const timer = setInterval(async () => {
       try {
-        const { status, error_message } = await api.getFileStatus(fileId);
+        const { status } = await api.getFileStatus(fileId);
 
         if (status === 'complete' || status === 'error') {
           clearInterval(timer);
           pollTimersRef.current.delete(fileId);
 
-          // Fetch full updated record and refresh shape
           const updated = await api.getFile(fileId);
           fileStore.set(fileId, updated);
-
-          // Force shape re-render by nudging a prop
-          const shapeId = createShapeId(fileId);
-          const shape = ed.getShape(shapeId);
-          if (shape) {
-            ed.updateShape({
-              id: shapeId,
-              type: 'file-card',
-              // Touch props to force HTMLContainer re-render
-              props: { ...(shape as any).props },
-            });
-          }
+          forceShapeUpdate(ed, fileId);
         }
       } catch (err) {
         console.error(`Poll failed for ${fileId}:`, err);
@@ -148,55 +135,136 @@ function CanvasInner() {
     pollTimersRef.current.set(fileId, timer);
   }
 
-  return null; // renders nothing — all canvas output comes from tldraw shapes
+  return null;
 }
 
-// ── Drop handler ─────────────────────────────────────────────────────────────
+// ── Force re-render helper ────────────────────────────────────────────────────
+// tldraw's HTMLContainer only re-renders when its own store changes.
+// After mutating fileStore, call this to nudge tldraw into re-rendering the shape.
+
+export function forceShapeUpdate(editor: Editor, fileId: string) {
+  const shapeId = createShapeId(fileId);
+  const shape = editor.getShape(shapeId);
+  if (!shape) return;
+
+  editor.updateShape({
+    id: shapeId,
+    type: 'file-card',
+    props: {
+      ...(shape as any).props,
+      _v: ((shape as any).props._v ?? 0) + 1
+    },
+  });
+}
+
+// ── File upload + shape creation ──────────────────────────────────────────────
+
+async function uploadAndCreateShape(
+  editor: Editor,
+  file: File,
+  x: number,
+  y: number,
+  onFileDropped?: (f: FileRecord) => void
+) {
+  try {
+    const result = await api.uploadFile(file);
+
+    if (result.duplicate) {
+      console.info(`Duplicate skipped: ${file.name}`);
+      return;
+    }
+
+    const fileRecord = result.file;
+
+    // Set in store BEFORE creating shape so first render has data
+    fileStore.set(fileRecord.id, fileRecord);
+
+    const shapeId = createShapeId(fileRecord.id);
+
+    editor.createShape({
+      id: shapeId,
+      type: 'file-card',
+      x,
+      y,
+      props: { w: CARD_WIDTH, h: CARD_HEIGHT, fileId: fileRecord.id, _v: 0 },
+      meta: { fileId: fileRecord.id },
+    } as any);
+
+    // Force immediate re-render so thumbnail shows without waiting for a nudge
+    forceShapeUpdate(editor, fileRecord.id);
+
+    onFileDropped?.(fileRecord);
+  } catch (err) {
+    console.error(`Upload failed for ${file.name}:`, err);
+  }
+}
+
+// ── Canvas Component ──────────────────────────────────────────────────────────
 
 interface CanvasProps {
   onFileDropped?: (file: FileRecord) => void;
+  onMount?: (editor: Editor) => void;
 }
 
-export function Canvas({ onFileDropped }: CanvasProps) {
+export function Canvas({ onFileDropped, onMount }: CanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
+  const editorRef = useRef<Editor | null>(null);
 
   const handleMount = useCallback((ed: Editor) => {
     setEditor(ed);
-  }, []);
+    editorRef.current = ed;
+    onMount?.(ed);
 
-  const handleFileDrop = useCallback(
-    async (ed: Editor, files: File[], point: { x: number; y: number }) => {
+    // FIX BUG 2: Override ALL tldraw external content handlers so tldraw
+    // doesn't consume dropped files/urls/text before our handler runs.
+
+    // Handle dropped files through our upload pipeline
+    ed.registerExternalContentHandler('files', async ({ point, files: droppedFiles }) => {
+      const canvasPoint = point ?? { x: 100, y: 100 };
+      for (let i = 0; i < droppedFiles.length; i++) {
+        await uploadAndCreateShape(
+          ed,
+          droppedFiles[i],
+          canvasPoint.x + i * (CARD_WIDTH + 20),
+          canvasPoint.y,
+          onFileDropped
+        );
+      }
+    });
+
+    // No-op handlers: prevent tldraw from trying to process URLs/text as its
+    // own content (which would consume the drop event for non-image types)
+    ed.registerExternalContentHandler('url', async () => {
+      // Intentionally empty — we don't handle URL drops
+    });
+    ed.registerExternalContentHandler('text', async () => {
+      // Intentionally empty — we don't handle text drops
+    });
+  }, [onFileDropped]);
+
+  // Fallback: also handle the raw DOM drop event for cases where
+  // registerExternalContentHandler doesn't fire (e.g. browser quirks)
+  const handleDomDrop = useCallback(
+    async (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const ed = editorRef.current;
+      if (!ed) return;
+
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+
+      const canvasPoint = ed.screenToPage({ x: e.clientX, y: e.clientY });
+
       for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const x = point.x + i * 220; // offset multiple drops horizontally
-        const y = point.y;
-
-        try {
-          const result = await api.uploadFile(file);
-
-          if (result.duplicate) {
-            console.info(`Duplicate file skipped: ${file.name}`);
-            continue;
-          }
-
-          const fileRecord = result.file;
-          fileStore.set(fileRecord.id, fileRecord);
-
-          const shapeId = createShapeId(fileRecord.id);
-
-          ed.createShape({
-            id: shapeId,
-            type: 'file-card',
-            x,
-            y,
-            props: { w: 200, h: 250, fileId: fileRecord.id },
-            meta: { fileId: fileRecord.id },
-          });
-
-          onFileDropped?.(fileRecord);
-        } catch (err) {
-          console.error(`Failed to upload ${file.name}:`, err);
-        }
+        await uploadAndCreateShape(
+          ed,
+          files[i],
+          canvasPoint.x + i * (CARD_WIDTH + 20),
+          canvasPoint.y,
+          onFileDropped
+        );
       }
     },
     [onFileDropped]
@@ -204,18 +272,8 @@ export function Canvas({ onFileDropped }: CanvasProps) {
 
   return (
     <div
-      style={{ position: 'fixed', inset: 0 }}
-      onDrop={async (e) => {
-        e.preventDefault();
-        if (!editor) return;
-
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length === 0) return;
-
-        // Convert screen coords to canvas coords
-        const canvasPoint = editor.screenToPage({ x: e.clientX, y: e.clientY });
-        await handleFileDrop(editor, files, canvasPoint);
-      }}
+      className="canvas-container"
+      onDrop={handleDomDrop}
       onDragOver={(e) => e.preventDefault()}
     >
       <Tldraw

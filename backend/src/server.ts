@@ -28,6 +28,7 @@ async function bootstrap(): Promise<void> {
   await fastify.register(cors, {
     origin: [
       'http://localhost:5173',   // Vite dev server
+      'http://127.0.0.1:5173',  // Vite dev server (IP form — browsers treat this as a separate origin)
       'tauri://localhost',        // Tauri production webview
       'https://tauri.localhost',  // Tauri v2 webview origin
     ],
@@ -38,6 +39,15 @@ async function bootstrap(): Promise<void> {
   // 500MB limit per file; adjust as needed
   await fastify.register(multipart, {
     limits: { fileSize: 500 * 1024 * 1024 },
+  });
+
+  // Custom JSON parser to safely allow top-level arrays which Fastify may reject by default
+  fastify.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
   });
 
   // Routes

@@ -3,6 +3,7 @@ import fs from 'fs';
 import sharp from 'sharp';
 import { THUMBNAILS_DIR } from './storage.js';
 import type { FileType } from './fileTypes.js';
+import pdfParse from 'pdf-parse';
 
 const THUMB_WIDTH = 300;
 const THUMB_HEIGHT = 200;
@@ -61,11 +62,9 @@ async function generateImageThumbnail(src: string, dest: string): Promise<string
 async function generatePdfThumbnail(pdfPath: string, dest: string): Promise<string | null> {
   try {
     // Try to extract page count from PDF for a slightly more informative placeholder
-    const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const data = new Uint8Array(fs.readFileSync(pdfPath));
-    const doc = await getDocument({ data, useSystemFonts: true }).promise;
-    const pageCount = doc.numPages;
-    await doc.destroy();
+    const data = fs.readFileSync(pdfPath);
+    const result = await pdfParse(data);
+    const pageCount = result.numpages;
 
     return generateSvgPlaceholder(
       dest,
@@ -117,10 +116,10 @@ async function generateVideoThumbnail(
       .webp({ quality: 80 })
       .toFile(dest);
 
-    fs.unlink(tempFrame, () => {});
+    fs.unlink(tempFrame, () => { });
     return dest;
   } catch (err) {
-    fs.unlink(tempFrame, () => {});
+    fs.unlink(tempFrame, () => { });
     // ffmpeg not installed or video unreadable — fall back to placeholder
     console.warn(`Video frame extraction failed for ${fileId}:`, (err as Error).message);
     return generateSvgPlaceholder(dest, '#8e44ad', 'VIDEO', '🎬');

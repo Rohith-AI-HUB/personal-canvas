@@ -50,3 +50,7 @@ lerna-debug.log*
 
 # OS
 Thumbs.db
+
+#Test
+test_files
+*.mjs

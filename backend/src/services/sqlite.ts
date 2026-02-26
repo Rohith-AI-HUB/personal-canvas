@@ -84,6 +84,8 @@ function initSchema(db: Database.Database): void {
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Note for Phase 2: files_fts is contentless (content='').
+    -- It requires explicit INSERTs (or Triggers) during ingest to be populated.
     CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
       file_id UNINDEXED,
       filename,

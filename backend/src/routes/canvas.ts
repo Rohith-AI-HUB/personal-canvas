@@ -14,7 +14,8 @@ export async function canvasRoutes(fastify: FastifyInstance): Promise<void> {
 
   // POST /api/canvas/nodes — batch upsert node positions from tldraw onChange
   fastify.post('/api/canvas/nodes', async (req: FastifyRequest, reply: FastifyReply) => {
-    const nodes = req.body as NodeUpdate[];
+    const body = req.body as unknown;
+    const nodes = Array.isArray(body) ? body : (body as { nodes?: NodeUpdate[] })?.nodes;
 
     if (!Array.isArray(nodes) || nodes.length === 0) {
       return reply.code(400).send({ error: 'Expected array of node updates' });

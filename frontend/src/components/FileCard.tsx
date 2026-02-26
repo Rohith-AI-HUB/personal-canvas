@@ -3,7 +3,7 @@ import {
   HTMLContainer,
   Rectangle2d,
   type TLBaseShape,
-  type ShapeProps,
+  type RecordProps,
   T,
 } from '@tldraw/tldraw';
 import type { FileRecord } from '../api';
@@ -14,55 +14,72 @@ export type FileCardShapeProps = {
   w: number;
   h: number;
   fileId: string;
+  _v: number;
 };
 
 export type FileCardShape = TLBaseShape<'file-card', FileCardShapeProps>;
 
-// Shape registry entry for tldraw
-export const fileCardShapeProps: ShapeProps<FileCardShapeProps> = {
+export const fileCardShapeProps: RecordProps<FileCardShape> = {
   w: T.number,
   h: T.number,
   fileId: T.string,
+  _v: T.number,
 };
 
-// ── File icon map ──────────────────────────────────────────────────────────────
+// ── Uniform card dimensions ────────────────────────────────────────────────────
+
+export const CARD_WIDTH = 220;
+export const CARD_HEIGHT = 260;
+
+// ── Constants ──────────────────────────────────────────────────────────────────
 
 const FILE_ICONS: Record<FileRecord['file_type'], string> = {
-  pdf:   '📄',
+  pdf: '📄',
   image: '🖼️',
   video: '🎬',
   audio: '🎵',
-  code:  '💻',
-  text:  '📝',
+  code: '💻',
+  text: '📝',
   other: '📁',
 };
 
 const FILE_COLORS: Record<FileRecord['file_type'], string> = {
-  pdf:   '#e74c3c',
-  image: '#3498db',
-  video: '#9b59b6',
-  audio: '#2980b9',
-  code:  '#27ae60',
-  text:  '#34495e',
-  other: '#95a5a6',
+  pdf: '#ef4444',
+  image: '#3b82f6',
+  video: '#8b5cf6',
+  audio: '#06b6d4',
+  code: '#10b981',
+  text: '#6366f1',
+  other: '#94a3b8',
 };
 
-// ── Component ─────────────────────────────────────────────────────────────────
+const FILE_GRADIENTS: Record<FileRecord['file_type'], string> = {
+  pdf: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+  image: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+  video: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+  audio: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)',
+  code: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+  text: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+  other: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)',
+};
+
+// ── FileCard Component ────────────────────────────────────────────────────────
 
 interface FileCardComponentProps {
   file: FileRecord;
   width: number;
   height: number;
-  isSelected: boolean;
 }
 
-export function FileCardComponent({ file, width, height, isSelected }: FileCardComponentProps) {
+export function FileCardComponent({ file, width, height }: FileCardComponentProps) {
   const title = file.metadata?.ai_title ?? file.filename;
   const summary = file.metadata?.ai_summary ?? null;
   const tags = file.tags ?? [];
   const icon = FILE_ICONS[file.file_type] ?? '📁';
-  const accentColor = FILE_COLORS[file.file_type] ?? '#95a5a6';
+  const accentColor = FILE_COLORS[file.file_type] ?? '#94a3b8';
+  const gradient = FILE_GRADIENTS[file.file_type] ?? FILE_GRADIENTS.other;
 
+  // Build the thumbnail URL — served via backend route
   const thumbnailUrl = file.thumbnail_path
     ? `http://127.0.0.1:3001/api/thumbnail?path=${encodeURIComponent(file.thumbnail_path)}`
     : null;
@@ -72,110 +89,147 @@ export function FileCardComponent({ file, width, height, isSelected }: FileCardC
       style={{
         width,
         height,
-        borderRadius: 10,
+        borderRadius: 14,
         overflow: 'hidden',
         background: '#ffffff',
-        boxShadow: isSelected
-          ? `0 0 0 2px ${accentColor}, 0 4px 20px rgba(0,0,0,0.18)`
-          : '0 2px 8px rgba(0,0,0,0.12)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.08)',
         display: 'flex',
         flexDirection: 'column',
-        fontFamily: 'system-ui, sans-serif',
+        fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
         userSelect: 'none',
-        cursor: 'default',
-        border: `1px solid ${isSelected ? accentColor : '#e2e8f0'}`,
-        transition: 'box-shadow 0.15s ease',
+        border: '1px solid rgba(0,0,0,0.06)',
         pointerEvents: 'all',
+        transition: 'box-shadow 0.2s ease, transform 0.2s ease',
       }}
     >
-      {/* Thumbnail area */}
+      {/* ── Thumbnail area ── */}
       <div
         style={{
-          height: 140,
-          background: thumbnailUrl ? `url(${thumbnailUrl}) center/cover` : accentColor,
+          height: Math.round(height * 0.52),
           flexShrink: 0,
           position: 'relative',
+          overflow: 'hidden',
+          background: gradient,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
       >
-        {!thumbnailUrl && (
-          <span style={{ fontSize: 48, opacity: 0.9 }}>{icon}</span>
-        )}
+        {/* FIX: Use <img> WITHOUT crossOrigin to avoid CORS issues in tldraw HTMLContainer */}
+        {thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            alt={file.filename}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              objectPosition: 'center',
+              display: 'block',
+            }}
+            onError={(e) => {
+              // On load failure, hide the img and show the icon fallback
+              (e.target as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        ) : null}
+
+        {/* Icon fallback — always shown behind the image */}
+        <span style={{
+          fontSize: 40,
+          opacity: 0.95,
+          position: 'relative',
+          zIndex: 1,
+          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
+        }}>
+          {icon}
+        </span>
 
         {/* Status badge */}
-        <StatusBadge status={file.status} accentColor={accentColor} />
+        <StatusBadge status={file.status} />
 
         {/* File type chip */}
         <div
           style={{
             position: 'absolute',
-            bottom: 6,
-            left: 6,
-            background: 'rgba(0,0,0,0.55)',
+            bottom: 8,
+            left: 8,
+            background: 'rgba(0,0,0,0.45)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
             color: '#fff',
-            fontSize: 10,
-            fontWeight: 600,
-            padding: '2px 6px',
-            borderRadius: 4,
+            fontSize: 9,
+            fontWeight: 700,
+            padding: '3px 8px',
+            borderRadius: 6,
             textTransform: 'uppercase',
-            letterSpacing: '0.5px',
+            letterSpacing: '0.8px',
+            zIndex: 2,
           }}
         >
           {file.file_type}
         </div>
       </div>
 
-      {/* Info area */}
-      <div style={{ padding: '8px 10px', flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {/* Title */}
+      {/* ── Info area ── */}
+      <div
+        style={{
+          padding: '10px 12px',
+          flex: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }}
+      >
         <div
           style={{
             fontSize: 12,
             fontWeight: 600,
-            color: '#1a202c',
+            color: '#1e293b',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             lineHeight: '1.3',
+            letterSpacing: '-0.01em',
           }}
           title={title}
         >
           {title}
         </div>
 
-        {/* Summary (only if complete) */}
         {summary && file.status === 'complete' && (
           <div
             style={{
               fontSize: 10,
-              color: '#718096',
+              color: '#64748b',
               overflow: 'hidden',
               display: '-webkit-box',
               WebkitLineClamp: 2,
               WebkitBoxOrient: 'vertical',
-              lineHeight: '1.4',
+              lineHeight: '1.45',
             }}
           >
             {summary}
           </div>
         )}
 
-        {/* Tags */}
         {tags.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 'auto' }}>
-            {tags.slice(0, 4).map((tag) => (
+            {tags.slice(0, 3).map((tag) => (
               <span
                 key={tag}
                 style={{
                   fontSize: 9,
-                  background: `${accentColor}1a`,
+                  background: `${accentColor}14`,
                   color: accentColor,
-                  border: `1px solid ${accentColor}40`,
-                  borderRadius: 3,
-                  padding: '1px 5px',
-                  fontWeight: 500,
+                  border: `1px solid ${accentColor}30`,
+                  borderRadius: 4,
+                  padding: '1px 6px',
+                  fontWeight: 600,
+                  letterSpacing: '0.02em',
                 }}
               >
                 {tag}
@@ -183,18 +237,37 @@ export function FileCardComponent({ file, width, height, isSelected }: FileCardC
             ))}
           </div>
         )}
+
+        {/* File size footer */}
+        {file.file_size && (
+          <div style={{
+            fontSize: 9,
+            color: '#94a3b8',
+            marginTop: 'auto',
+            fontWeight: 500,
+          }}>
+            {formatFileSize(file.file_size)}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StatusBadge({ status, accentColor }: { status: FileRecord['status']; accentColor: string }) {
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function StatusBadge({ status }: { status: FileRecord['status'] }) {
   if (status === 'complete') return null;
 
   const badges: Record<string, { label: string; bg: string }> = {
-    pending:    { label: '⏳', bg: 'rgba(0,0,0,0.55)' },
-    processing: { label: '⚙️', bg: 'rgba(0,0,0,0.55)' },
-    error:      { label: '⚠️', bg: 'rgba(231,76,60,0.85)' },
+    pending: { label: '⏳', bg: 'rgba(255,255,255,0.25)' },
+    processing: { label: '⚙️', bg: 'rgba(255,255,255,0.25)' },
+    error: { label: '⚠️', bg: 'rgba(239,68,68,0.85)' },
   };
 
   const badge = badges[status];
@@ -204,9 +277,11 @@ function StatusBadge({ status, accentColor }: { status: FileRecord['status']; ac
     <div
       style={{
         position: 'absolute',
-        top: 6,
-        right: 6,
+        top: 8,
+        right: 8,
         background: badge.bg,
+        backdropFilter: 'blur(8px)',
+        WebkitBackdropFilter: 'blur(8px)',
         color: '#fff',
         fontSize: 14,
         width: 28,
@@ -215,6 +290,7 @@ function StatusBadge({ status, accentColor }: { status: FileRecord['status']; ac
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        zIndex: 2,
       }}
       title={status}
     >
@@ -223,18 +299,18 @@ function StatusBadge({ status, accentColor }: { status: FileRecord['status']; ac
   );
 }
 
-// ── Shape Util (tldraw integration) ──────────────────────────────────────────
+// ── Shape Util ────────────────────────────────────────────────────────────────
 
-// This map is managed externally (by Canvas.tsx) and injected here
-// so the ShapeUtil can look up live file data without prop drilling.
+// Mutable map: fileId → FileRecord. Managed by Canvas.tsx.
+// On any mutation, call forceShapeUpdate(editor, fileId) to re-render.
 export const fileStore = new Map<string, FileRecord>();
 
-export class FileCardShapeUtil extends BaseBoxShapeUtil<FileCardShape> {
+export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
   static override type = 'file-card' as const;
   static override props = fileCardShapeProps;
 
   override getDefaultProps(): FileCardShapeProps {
-    return { w: 200, h: 250, fileId: '' };
+    return { w: CARD_WIDTH, h: CARD_HEIGHT, fileId: '', _v: 0 };
   }
 
   override getGeometry(shape: FileCardShape) {
@@ -247,21 +323,29 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<FileCardShape> {
 
   override component(shape: FileCardShape) {
     const file = fileStore.get(shape.props.fileId);
+
     if (!file) {
       return (
         <HTMLContainer>
-          <div style={{
-            width: shape.props.w,
-            height: shape.props.h,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            background: '#f7f8fa',
-            borderRadius: 10,
-            color: '#aaa',
-            fontSize: 12,
-          }}>
-            Loading...
+          <div
+            style={{
+              width: shape.props.w,
+              height: shape.props.h,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: '#f8fafc',
+              borderRadius: 14,
+              color: '#94a3b8',
+              fontSize: 12,
+              border: '1px solid #e2e8f0',
+              fontFamily: "'Inter', system-ui, sans-serif",
+            }}
+          >
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>⏳</div>
+              <div>Loading…</div>
+            </div>
           </div>
         </HTMLContainer>
       );
@@ -273,13 +357,12 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<FileCardShape> {
           file={file}
           width={shape.props.w}
           height={shape.props.h}
-          isSelected={false}
         />
       </HTMLContainer>
     );
   }
 
   override indicator(shape: FileCardShape) {
-    return <rect width={shape.props.w} height={shape.props.h} rx={10} />;
+    return <rect width={shape.props.w} height={shape.props.h} rx={14} />;
   }
 }
