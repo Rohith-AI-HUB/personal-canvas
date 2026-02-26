@@ -88,6 +88,10 @@ export const api = {
       body: JSON.stringify(nodes),
     }),
 
+  /** Retry AI processing for a file in error state. */
+  retryFile: (id: string): Promise<{ queued: boolean }> =>
+    request(`/api/files/${id}/retry`, { method: 'POST' }),
+
   /** Thumbnail URL for a file (served from backend static or resolved from path). */
   thumbnailUrl: (filePath: string | null): string | null => {
     if (!filePath) return null;

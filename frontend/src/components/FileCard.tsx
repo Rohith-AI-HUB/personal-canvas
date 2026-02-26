@@ -6,15 +6,22 @@ import {
   type RecordProps,
   T,
 } from '@tldraw/tldraw';
-import type { FileRecord } from '../api';
-
-// ── Shape type definition ──────────────────────────────────────────────────────
+import type { FileRecord, FileStatus } from '../api';
 
 export type FileCardShapeProps = {
   w: number;
   h: number;
   fileId: string;
   _v: number;
+};
+
+export type FileCardMeta = {
+  fileId: string;
+  aiTitle?: string;
+  summary?: string;
+  tags?: string[];
+  status?: FileStatus;
+  errorMessage?: string;
 };
 
 export type FileCardShape = TLBaseShape<'file-card', FileCardShapeProps>;
@@ -26,12 +33,8 @@ export const fileCardShapeProps: RecordProps<FileCardShape> = {
   _v: T.number,
 };
 
-// ── Uniform card dimensions ────────────────────────────────────────────────────
-
 export const CARD_WIDTH = 220;
 export const CARD_HEIGHT = 260;
-
-// ── Constants ──────────────────────────────────────────────────────────────────
 
 const FILE_ICONS: Record<FileRecord['file_type'], string> = {
   pdf: '📄',
@@ -63,23 +66,26 @@ const FILE_GRADIENTS: Record<FileRecord['file_type'], string> = {
   other: 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)',
 };
 
-// ── FileCard Component ────────────────────────────────────────────────────────
-
 interface FileCardComponentProps {
   file: FileRecord;
   width: number;
   height: number;
+  shapeMeta?: FileCardMeta;
+  onRetry?: (fileId: string) => void;
 }
 
-export function FileCardComponent({ file, width, height }: FileCardComponentProps) {
-  const title = file.metadata?.ai_title ?? file.filename;
-  const summary = file.metadata?.ai_summary ?? null;
-  const tags = file.tags ?? [];
+export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: FileCardComponentProps) {
+  const title = shapeMeta?.aiTitle ?? file.metadata?.ai_title ?? file.filename;
+  const summaryRaw = shapeMeta?.summary ?? file.metadata?.ai_summary ?? '';
+  const summary = summaryRaw.length > 80 ? `${summaryRaw.slice(0, 80).trim()}...` : summaryRaw;
+  const tags = (shapeMeta?.tags ?? file.tags ?? []).filter(Boolean);
+  const status = shapeMeta?.status ?? file.status;
   const icon = FILE_ICONS[file.file_type] ?? '📁';
   const accentColor = FILE_COLORS[file.file_type] ?? '#94a3b8';
   const gradient = FILE_GRADIENTS[file.file_type] ?? FILE_GRADIENTS.other;
 
-  // Build the thumbnail URL — served via backend route
+  const shownTags = tags.slice(0, 5);
+  const hiddenTagCount = Math.max(tags.length - shownTags.length, 0);
   const thumbnailUrl = file.thumbnail_path
     ? `http://127.0.0.1:3001/api/thumbnail?path=${encodeURIComponent(file.thumbnail_path)}`
     : null;
@@ -99,10 +105,8 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
         userSelect: 'none',
         border: '1px solid rgba(0,0,0,0.06)',
         pointerEvents: 'all',
-        transition: 'box-shadow 0.2s ease, transform 0.2s ease',
       }}
     >
-      {/* ── Thumbnail area ── */}
       <div
         style={{
           height: Math.round(height * 0.52),
@@ -115,7 +119,6 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
           justifyContent: 'center',
         }}
       >
-        {/* FIX: Use <img> WITHOUT crossOrigin to avoid CORS issues in tldraw HTMLContainer */}
         {thumbnailUrl ? (
           <img
             src={thumbnailUrl}
@@ -130,27 +133,25 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
               display: 'block',
             }}
             onError={(e) => {
-              // On load failure, hide the img and show the icon fallback
               (e.target as HTMLImageElement).style.display = 'none';
             }}
           />
         ) : null}
 
-        {/* Icon fallback — always shown behind the image */}
-        <span style={{
-          fontSize: 40,
-          opacity: 0.95,
-          position: 'relative',
-          zIndex: 1,
-          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
-        }}>
+        <span
+          style={{
+            fontSize: 40,
+            opacity: 0.95,
+            position: 'relative',
+            zIndex: 1,
+            filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.15))',
+          }}
+        >
           {icon}
         </span>
 
-        {/* Status badge */}
-        <StatusBadge status={file.status} />
+        <StatusBadge status={status} fileId={file.id} onRetry={onRetry} />
 
-        {/* File type chip */}
         <div
           style={{
             position: 'absolute',
@@ -173,7 +174,6 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
         </div>
       </div>
 
-      {/* ── Info area ── */}
       <div
         style={{
           padding: '10px 12px',
@@ -200,17 +200,17 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
           {title}
         </div>
 
-        {summary && file.status === 'complete' && (
+        {summary && (
           <div
             style={{
               fontSize: 10,
               color: '#64748b',
               overflow: 'hidden',
-              display: '-webkit-box',
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
               lineHeight: '1.45',
             }}
+            title={summaryRaw}
           >
             {summary}
           </div>
@@ -218,7 +218,7 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
 
         {tags.length > 0 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 'auto' }}>
-            {tags.slice(0, 3).map((tag) => (
+            {shownTags.map((tag) => (
               <span
                 key={tag}
                 style={{
@@ -235,17 +235,34 @@ export function FileCardComponent({ file, width, height }: FileCardComponentProp
                 {tag}
               </span>
             ))}
+            {hiddenTagCount > 0 && (
+              <span
+                style={{
+                  fontSize: 9,
+                  background: '#f1f5f9',
+                  color: '#64748b',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 4,
+                  padding: '1px 6px',
+                  fontWeight: 600,
+                  letterSpacing: '0.02em',
+                }}
+              >
+                +{hiddenTagCount}
+              </span>
+            )}
           </div>
         )}
 
-        {/* File size footer */}
         {file.file_size && (
-          <div style={{
-            fontSize: 9,
-            color: '#94a3b8',
-            marginTop: 'auto',
-            fontWeight: 500,
-          }}>
+          <div
+            style={{
+              fontSize: 9,
+              color: '#94a3b8',
+              marginTop: 'auto',
+              fontWeight: 500,
+            }}
+          >
             {formatFileSize(file.file_size)}
           </div>
         )}
@@ -261,13 +278,20 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
-function StatusBadge({ status }: { status: FileRecord['status'] }) {
-  if (status === 'complete') return null;
-
-  const badges: Record<string, { label: string; bg: string }> = {
+function StatusBadge({
+  status,
+  fileId,
+  onRetry,
+}: {
+  status: FileStatus;
+  fileId: string;
+  onRetry?: (id: string) => void;
+}) {
+  const badges: Record<FileStatus, { label: string; bg: string; spin?: boolean; clickable?: boolean }> = {
     pending: { label: '⏳', bg: 'rgba(255,255,255,0.25)' },
-    processing: { label: '⚙️', bg: 'rgba(255,255,255,0.25)' },
-    error: { label: '⚠️', bg: 'rgba(239,68,68,0.85)' },
+    processing: { label: '⏳', bg: 'rgba(255,255,255,0.25)', spin: true },
+    complete: { label: '✅', bg: 'rgba(16,185,129,0.9)' },
+    error: { label: '⚠️', bg: 'rgba(239,68,68,0.9)', clickable: true },
   };
 
   const badge = badges[status];
@@ -291,19 +315,30 @@ function StatusBadge({ status }: { status: FileRecord['status'] }) {
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 2,
+        cursor: badge.clickable ? 'pointer' : 'default',
       }}
-      title={status}
+      className={badge.spin ? 'file-status-spin' : undefined}
+      title={status === 'error' ? 'Click to retry AI processing' : status}
+      onClick={
+        status === 'error' && onRetry
+          ? (e) => {
+              e.stopPropagation();
+              onRetry(fileId);
+            }
+          : undefined
+      }
     >
       {badge.label}
     </div>
   );
 }
 
-// ── Shape Util ────────────────────────────────────────────────────────────────
-
-// Mutable map: fileId → FileRecord. Managed by Canvas.tsx.
-// On any mutation, call forceShapeUpdate(editor, fileId) to re-render.
 export const fileStore = new Map<string, FileRecord>();
+
+export let onFileRetry: ((fileId: string) => void) | undefined;
+export function setRetryHandler(fn: (fileId: string) => void) {
+  onFileRetry = fn;
+}
 
 export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
   static override type = 'file-card' as const;
@@ -344,7 +379,7 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
           >
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 24, marginBottom: 6 }}>⏳</div>
-              <div>Loading…</div>
+              <div>Loading...</div>
             </div>
           </div>
         </HTMLContainer>
@@ -357,6 +392,8 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
           file={file}
           width={shape.props.w}
           height={shape.props.h}
+          shapeMeta={(shape as any).meta as FileCardMeta | undefined}
+          onRetry={onFileRetry}
         />
       </HTMLContainer>
     );
