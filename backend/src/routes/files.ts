@@ -10,6 +10,7 @@ import { hashFile } from '../services/dedup.js';
 import { saveFile, deleteFileFromDisk } from '../services/storage.js';
 import { generateThumbnail } from '../services/thumbnails.js';
 import { detectFileType } from '../services/fileTypes.js';
+import { deleteByFileId } from '../services/qdrant.js';
 import type { FileRecord, FileWithMetadata } from '../types.js';
 import { enqueueFile } from '../queue/ingestQueue.js';
 
@@ -165,7 +166,7 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
     // Cascade deletes tags, metadata, canvas_nodes via FK ON DELETE CASCADE.
     db.prepare('DELETE FROM files WHERE id = ?').run(id);
 
-    // TODO Phase 3: delete Qdrant vectors for this file_id
+    await deleteByFileId(id);
 
     return reply.code(204).send();
   });

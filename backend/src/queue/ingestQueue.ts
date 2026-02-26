@@ -2,39 +2,23 @@ import PQueue from 'p-queue';
 import { getDb } from '../services/sqlite.js';
 import { extractContent } from '../services/extraction.js';
 import { getAIMetadata } from '../services/groq.js';
+import { chunkText, embedText } from '../services/embeddings.js';
+import { deleteByFileId, upsertChunks } from '../services/qdrant.js';
 import type { FileRecord } from '../types.js';
 
-// ─────────────────────────────────────────────
-// Queue — single-concurrency, throttled to Groq free tier limits
-// 1 job per 2.5 seconds = ~24 files/minute, comfortably under free tier
-// ─────────────────────────────────────────────
 const ingestQueue = new PQueue({
   concurrency: 1,
   intervalCap: 1,
   interval: 2500,
 });
 
-// ─────────────────────────────────────────────
-// Public API
-// ─────────────────────────────────────────────
-
-/**
- * Enqueue a file for AI ingest.
- * Safe to call multiple times with the same file — queue will process it once.
- */
 export function enqueueFile(file: FileRecord): void {
   ingestQueue.add(() => runIngestPipeline(file));
 }
 
-/**
- * On every app boot:
- * 1. Reset any file stuck in 'processing' (crash during previous run)
- * 2. Re-enqueue all 'pending' files with retry_count < 3
- */
 export function recoverPendingJobs(): void {
   const db = getDb();
 
-  // Files left as 'processing' mean the app crashed mid-ingest
   db.prepare(`
     UPDATE files SET status = 'pending', updated_at = CURRENT_TIMESTAMP
     WHERE status = 'processing'
@@ -60,32 +44,115 @@ export function getQueueSize(): number {
   return ingestQueue.size + ingestQueue.pending;
 }
 
-// ─────────────────────────────────────────────
-// Core Pipeline
-// Status state machine:  pending → processing → complete
-//                                            ↘ error (retry_count++)
-// Files with retry_count >= 3 are permanently error.
-// ─────────────────────────────────────────────
+type EmbeddingPayload = {
+  filename: string;
+  file_type: string;
+  ai_title: string;
+  ai_category: string | null;
+  tags: string[];
+};
+
+async function indexFileContent(fileId: string, content: string, payload: EmbeddingPayload): Promise<number> {
+  const chunks = chunkText(content, 500, 50);
+  if (chunks.length === 0) {
+    await deleteByFileId(fileId);
+    return 0;
+  }
+
+  const embeddings: number[][] = [];
+  for (const chunk of chunks) {
+    embeddings.push(await embedText(chunk));
+  }
+
+  await deleteByFileId(fileId);
+  await upsertChunks(fileId, chunks, embeddings, payload);
+
+  return chunks.length;
+}
+
+export async function reindexAllCompleteFiles(): Promise<{
+  filesTotal: number;
+  filesIndexed: number;
+  filesSkipped: number;
+  chunksIndexed: number;
+}> {
+  const db = getDb();
+
+  const rows = db.prepare(`
+    SELECT
+      f.id AS file_id,
+      f.filename,
+      f.file_type,
+      m.ai_title,
+      m.ai_category,
+      m.extracted_text,
+      COALESCE(GROUP_CONCAT(t.tag, ' '), '') AS tag_blob
+    FROM files f
+    LEFT JOIN file_metadata m ON m.file_id = f.id
+    LEFT JOIN tags t ON t.file_id = f.id
+    WHERE f.status = 'complete'
+    GROUP BY f.id
+    ORDER BY f.created_at ASC
+  `).all() as Array<{
+    file_id: string;
+    filename: string;
+    file_type: string;
+    ai_title: string | null;
+    ai_category: string | null;
+    extracted_text: string | null;
+    tag_blob: string;
+  }>;
+
+  let filesIndexed = 0;
+  let filesSkipped = 0;
+  let chunksIndexed = 0;
+
+  for (const row of rows) {
+    const content = (row.extracted_text ?? '').trim();
+    if (!content) {
+      filesSkipped += 1;
+      continue;
+    }
+
+    const chunkCount = await indexFileContent(row.file_id, content, {
+      filename: row.filename,
+      file_type: row.file_type,
+      ai_title: row.ai_title ?? row.filename,
+      ai_category: row.ai_category,
+      tags: row.tag_blob.trim() ? row.tag_blob.trim().split(/\s+/) : [],
+    });
+
+    if (chunkCount === 0) {
+      filesSkipped += 1;
+      continue;
+    }
+
+    filesIndexed += 1;
+    chunksIndexed += chunkCount;
+    console.log(`[ingestQueue] reindex ${row.filename}: ${chunkCount} chunks`);
+  }
+
+  return {
+    filesTotal: rows.length,
+    filesIndexed,
+    filesSkipped,
+    chunksIndexed,
+  };
+}
+
 async function runIngestPipeline(file: FileRecord): Promise<void> {
   const db = getDb();
 
-  // Mark as processing
   db.prepare(`
     UPDATE files SET status = 'processing', updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(file.id);
 
   try {
-    // Step 1: Extract content (text, OCR, transcript, code summary)
     const extraction = await extractContent(file);
-
-    // Step 2: Get AI-generated title, summary, category, tags
     const aiMeta = await getAIMetadata(file.filename, extraction.content);
-
-    // Use filename as title fallback if AI returned empty
     const title = aiMeta.title || file.filename;
 
-    // Step 3: Persist metadata to SQLite
     const upsertMetadata = db.prepare(`
       INSERT INTO file_metadata
         (file_id, ai_title, ai_summary, ai_category, extracted_text, word_count, language, processed_at)
@@ -104,7 +171,6 @@ async function runIngestPipeline(file: FileRecord): Promise<void> {
       INSERT INTO tags (file_id, tag, source) VALUES (?, ?, 'ai')
     `);
 
-    // Contentless FTS5 doesn't support ON CONFLICT — must DELETE then INSERT
     const deleteFts = db.prepare(`DELETE FROM files_fts WHERE file_id = ?`);
     const insertFts = db.prepare(`
       INSERT INTO files_fts
@@ -112,30 +178,22 @@ async function runIngestPipeline(file: FileRecord): Promise<void> {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
-    const markComplete = db.prepare(`
-      UPDATE files SET status = 'complete', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `);
-
-    // All SQLite writes in one transaction for atomicity
     db.transaction(() => {
       upsertMetadata.run(
         file.id,
         title,
         aiMeta.summary,
         aiMeta.category,
-        extraction.content.slice(0, 100_000), // cap stored text at 100k chars
+        extraction.content.slice(0, 100_000),
         extraction.wordCount,
         extraction.language
       );
 
-      // Clear old AI tags before inserting new ones
       db.prepare(`DELETE FROM tags WHERE file_id = ? AND source = 'ai'`).run(file.id);
       for (const tag of aiMeta.tags) {
         insertTags.run(file.id, tag);
       }
 
-      // Contentless FTS5: delete existing row first, then re-insert
       deleteFts.run(file.id);
       insertFts.run(
         file.id,
@@ -144,21 +202,28 @@ async function runIngestPipeline(file: FileRecord): Promise<void> {
         aiMeta.summary,
         aiMeta.category,
         aiMeta.tags.join(' '),
-        extraction.content.slice(0, 50_000) // FTS needs less than full text
+        extraction.content.slice(0, 50_000)
       );
-
-      markComplete.run(file.id);
     })();
 
-    console.log(`[ingestQueue] ✓ ${file.filename} (${file.file_type}) → "${title}"`);
+    const chunkCount = await indexFileContent(file.id, extraction.content, {
+      filename: file.filename,
+      file_type: file.file_type,
+      ai_title: title,
+      ai_category: aiMeta.category,
+      tags: aiMeta.tags,
+    });
 
-    // Phase 3 hook: embeddings + Qdrant upsert will be added here
+    db.prepare(`
+      UPDATE files SET status = 'complete', updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(file.id);
 
+    console.log(`[ingestQueue] ok ${file.filename} (${file.file_type}) -> "${title}" [${chunkCount} chunks]`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[ingestQueue] ✗ ${file.filename}:`, message);
+    console.error(`[ingestQueue] fail ${file.filename}:`, message);
 
-    // State machine: increment retry_count; if >= 3 → permanent error
     db.prepare(`
       UPDATE files
       SET

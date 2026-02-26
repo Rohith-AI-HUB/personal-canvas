@@ -49,6 +49,28 @@ export interface NodeUpdate {
   height: number;
 }
 
+export interface SearchResult {
+  file_id: string;
+  filename: string;
+  file_type: FileRecord['file_type'];
+  ai_title: string | null;
+  ai_category: string | null;
+  tags: string;
+  highlight: string | null;
+  semantic_text: string | null;
+  keyword_score: number;
+  semantic_score: number;
+  hybrid_score: number;
+  created_at: string | null;
+}
+
+export interface SearchResponse {
+  query: string;
+  keyword_results: SearchResult[];
+  semantic_results: Array<{ file_id: string; score: number; text: string }>;
+  results: SearchResult[];
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
@@ -91,6 +113,25 @@ export const api = {
   /** Retry AI processing for a file in error state. */
   retryFile: (id: string): Promise<{ queued: boolean }> =>
     request(`/api/files/${id}/retry`, { method: 'POST' }),
+
+  /** Hybrid search (keyword + semantic). */
+  searchFiles: (q: string, opts?: { type?: string; category?: string; semantic?: boolean; topN?: number }): Promise<SearchResponse> => {
+    const params = new URLSearchParams({ q });
+    if (opts?.type) params.set('type', opts.type);
+    if (opts?.category) params.set('category', opts.category);
+    if (opts?.semantic === false) params.set('semantic', '0');
+    if (opts?.topN) params.set('topN', String(opts.topN));
+    return request(`/api/search?${params.toString()}`);
+  },
+
+  /** Admin endpoint to back-fill semantic vectors. */
+  reindexVectors: (): Promise<{
+    ok: boolean;
+    files_total: number;
+    files_indexed: number;
+    files_skipped: number;
+    chunks_indexed: number;
+  }> => request('/api/admin/reindex', { method: 'POST' }),
 
   /** Thumbnail URL for a file (served from backend static or resolved from path). */
   thumbnailUrl: (filePath: string | null): string | null => {

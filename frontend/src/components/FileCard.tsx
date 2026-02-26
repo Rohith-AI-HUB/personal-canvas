@@ -22,6 +22,7 @@ export type FileCardMeta = {
   tags?: string[];        // empty array until AI completes
   status?: FileStatus;
   errorMessage?: string;  // only present on error
+  highlightUntil?: number;
   // All fields must be JSON-serializable (no undefined at runtime) — tldraw enforces this.
 };
 
@@ -84,6 +85,7 @@ export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: F
   const icon = FILE_ICONS[file.file_type] ?? '📁';
   const accentColor = FILE_COLORS[file.file_type] ?? '#94a3b8';
   const gradient = FILE_GRADIENTS[file.file_type] ?? FILE_GRADIENTS.other;
+  const pulseActive = (shapeMeta?.highlightUntil ?? 0) > Date.now();
 
   const shownTags = tags.slice(0, 5);
   const hiddenTagCount = Math.max(tags.length - shownTags.length, 0);
@@ -104,7 +106,8 @@ export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: F
         flexDirection: 'column',
         fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
         userSelect: 'none',
-        border: '1px solid rgba(0,0,0,0.06)',
+        border: pulseActive ? '2px solid #f59e0b' : '1px solid rgba(0,0,0,0.06)',
+        animation: pulseActive ? 'search-card-pulse 1s ease-out' : undefined,
         pointerEvents: 'all',
       }}
     >

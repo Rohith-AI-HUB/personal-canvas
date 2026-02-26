@@ -26,7 +26,9 @@ import { getDb } from './services/sqlite.js';
 import { ensureStorageDirs, FILES_DIR, THUMBNAILS_DIR } from './services/storage.js';
 import { fileRoutes } from './routes/files.js';
 import { canvasRoutes } from './routes/canvas.js';
+import { searchRoutes } from './routes/search.js';
 import { recoverPendingJobs } from './queue/ingestQueue.js';
+import { ensureCollection } from './services/qdrant.js';
 
 const PORT = Number(process.env.BACKEND_PORT) || 3001;
 
@@ -68,6 +70,7 @@ async function bootstrap(): Promise<void> {
 
   // Initialize SQLite with WAL mode.
   const db = getDb();
+  await ensureCollection();
 
   // Cleanup for crash-window leftovers from interrupted uploads.
   await cleanOrphanFiles(db);
@@ -102,6 +105,7 @@ async function bootstrap(): Promise<void> {
 
   await fastify.register(fileRoutes);
   await fastify.register(canvasRoutes);
+  await fastify.register(searchRoutes);
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
 

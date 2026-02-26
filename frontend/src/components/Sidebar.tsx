@@ -27,15 +27,21 @@ const TYPE_ICONS: Record<FileRecord['file_type'], string> = {
 
 interface SidebarProps {
     onUpload?: (file: FileRecord) => void;
+    isOpen?: boolean;
 }
 
-export function Sidebar({ onUpload }: SidebarProps) {
+export function Sidebar({ onUpload, isOpen = true }: SidebarProps) {
     const [files, setFiles] = useState<FileRecord[]>([]);
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(!isOpen);
     const [uploading, setUploading] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Update collapsed state when isOpen prop changes
+    useEffect(() => {
+        setCollapsed(!isOpen);
+    }, [isOpen]);
 
     // Fetch file list on mount + refresh periodically
     useEffect(() => {

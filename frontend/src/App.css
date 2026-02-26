@@ -21,6 +21,24 @@ html, body, #root {
   overflow: hidden;
   background: #f8fafc;
 }
+.workspace {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.topbar {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  right: 10px;
+  z-index: 40;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.topbar > * {
+  pointer-events: all;
+}
 
 /* ── Canvas container ──────────────────────────────────────────────────────── */
 
@@ -63,6 +81,9 @@ html, body, #root {
   --color-low-border: #e2e8f0 !important;
   --color-muted-1: #f1f5f9 !important;
   --color-muted-2: #f8fafc !important;
+}
+.workspace .tlui-menu-zone {
+  top: 8px !important;
 }
 
 /* Spinner animation for sidebar upload */

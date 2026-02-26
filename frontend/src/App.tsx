@@ -1,14 +1,16 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import type { Editor } from '@tldraw/tldraw';
 import { createShapeId } from '@tldraw/tldraw';
 import { fileStore, CARD_WIDTH, CARD_HEIGHT } from './components/FileCard';
 import type { FileRecord } from './api';
 import { Canvas } from './components/Canvas';
 import { Sidebar } from './components/Sidebar';
+import { TopBar } from './components/TopBar';
 import './App.css';
 
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(true);
 
   const handleFileUploaded = (file: FileRecord) => {
     const editor = editorRef.current;
@@ -29,11 +31,20 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <Sidebar onUpload={handleFileUploaded} />
-      <Canvas
-        onFileDropped={handleFileUploaded}
-        onMount={(ed) => { editorRef.current = ed; }}
+      <TopBar
+        getEditor={() => editorRef.current}
+        onMenuToggle={() => setIsMenuOpen(!isMenuOpen)}
+        isMenuOpen={isMenuOpen}
       />
+      <div className="app-body">
+        <Sidebar isOpen={isMenuOpen} onUpload={handleFileUploaded} />
+        <div className="workspace">
+          <Canvas
+            onFileDropped={handleFileUploaded}
+            onMount={(ed) => { editorRef.current = ed; }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

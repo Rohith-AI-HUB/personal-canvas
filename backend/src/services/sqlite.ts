@@ -84,8 +84,9 @@ function initSchema(db: Database.Database): void {
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- Note for Phase 2: files_fts is contentless (content='').
-    -- It requires explicit INSERTs (or Triggers) during ingest to be populated.
+    -- FTS table storing searchable fields for keyword + hybrid search.
+    -- Keep this as a normal (non-contentless) FTS table so file_id and
+    -- other columns can be read during JOINs in /api/search.
     CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
       file_id UNINDEXED,
       filename,
@@ -93,9 +94,7 @@ function initSchema(db: Database.Database): void {
       ai_summary,
       ai_category,
       tags,
-      extracted_text,
-      content='',
-      contentless_delete=1
+      extracted_text
     );
 
     CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
@@ -103,6 +102,48 @@ function initSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_tags_file_id ON tags(file_id);
     CREATE INDEX IF NOT EXISTS idx_canvas_file_id ON canvas_nodes(file_id);
     CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id);
+  `);
+
+  migrateLegacyContentlessFts(db);
+}
+
+function migrateLegacyContentlessFts(db: Database.Database): void {
+  const row = db.prepare(`
+    SELECT sql
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'files_fts'
+  `).get() as { sql?: string } | undefined;
+
+  const sql = row?.sql ?? '';
+  const isLegacyContentless = sql.includes("content=''");
+  if (!isLegacyContentless) return;
+
+  db.exec(`
+    DROP TABLE IF EXISTS files_fts;
+
+    CREATE VIRTUAL TABLE files_fts USING fts5(
+      file_id UNINDEXED,
+      filename,
+      ai_title,
+      ai_summary,
+      ai_category,
+      tags,
+      extracted_text
+    );
+
+    INSERT INTO files_fts
+      (file_id, filename, ai_title, ai_summary, ai_category, tags, extracted_text)
+    SELECT
+      f.id,
+      f.filename,
+      fm.ai_title,
+      fm.ai_summary,
+      fm.ai_category,
+      COALESCE((SELECT GROUP_CONCAT(t.tag, ' ') FROM tags t WHERE t.file_id = f.id), ''),
+      COALESCE(fm.extracted_text, '')
+    FROM files f
+    LEFT JOIN file_metadata fm ON fm.file_id = f.id
+    WHERE f.status = 'complete';
   `);
 }
 
