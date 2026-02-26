@@ -46,6 +46,8 @@ const FALLBACK_METADATA: AIMetadata = {
   tags: [],
 };
 
+const DEFAULT_TEXT_MODEL = process.env.GROQ_TEXT_MODEL?.trim() || 'llama-3.3-70b-versatile';
+
 // ─────────────────────────────────────────────
 // AI Tagging
 // ─────────────────────────────────────────────
@@ -73,7 +75,7 @@ export async function getAIMetadata(
     const client = getClient();
 
     const response = await client.chat.completions.create({
-      model: 'llama-3.1-70b-versatile',
+      model: DEFAULT_TEXT_MODEL,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: USER_PROMPT(content) },
@@ -99,7 +101,10 @@ export async function getAIMetadata(
     };
   } catch (err) {
     // A failed AI response must never crash the pipeline.
-    console.error('[groq] getAIMetadata failed:', (err as Error).message);
+    console.error(
+      `[groq] getAIMetadata failed (model=${DEFAULT_TEXT_MODEL}):`,
+      (err as Error).message
+    );
     return { ...FALLBACK_METADATA, title: filename };
   }
 }

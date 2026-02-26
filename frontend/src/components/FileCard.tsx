@@ -17,11 +17,12 @@ export type FileCardShapeProps = {
 
 export type FileCardMeta = {
   fileId: string;
-  aiTitle?: string;
-  summary?: string;
-  tags?: string[];
+  aiTitle?: string;       // only present when AI has processed the file
+  summary?: string;       // only present when AI has processed the file
+  tags?: string[];        // empty array until AI completes
   status?: FileStatus;
-  errorMessage?: string;
+  errorMessage?: string;  // only present on error
+  // All fields must be JSON-serializable (no undefined at runtime) — tldraw enforces this.
 };
 
 export type FileCardShape = TLBaseShape<'file-card', FileCardShapeProps>;

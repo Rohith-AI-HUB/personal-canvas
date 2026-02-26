@@ -1,3 +1,21 @@
+// Must be first — catches Tesseract worker thread errors that escape promise chains
+// and would otherwise crash the process via process.nextTick.
+process.on('uncaughtException', (err) => {
+  const msg = err?.message ?? String(err);
+  // Known Tesseract/libpng worker errors — log and continue, do not exit
+  if (
+    msg.includes('Error attempting to read image') ||
+    msg.includes('libpng error') ||
+    msg.includes('IDAT')
+  ) {
+    console.error('[server] Tesseract worker error (non-fatal, file skipped):', msg);
+    return;
+  }
+  // All other uncaught exceptions are real crashes — let them propagate
+  console.error('[server] Uncaught exception (fatal):', err);
+  process.exit(1);
+});
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';

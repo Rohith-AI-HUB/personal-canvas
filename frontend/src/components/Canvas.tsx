@@ -20,14 +20,17 @@ import { api, type FileRecord, type NodeUpdate } from '../api';
 const CUSTOM_SHAPE_UTILS = [FileCardShapeUtil];
 
 function buildCardMeta(file: FileRecord): FileCardMeta {
-  return {
+  // tldraw requires all meta values to be JSON-serializable — no undefined allowed.
+  // Use null or omit the key entirely; here we use null for optional strings.
+  const meta: FileCardMeta = {
     fileId: file.id,
-    aiTitle: file.metadata?.ai_title ?? undefined,
-    summary: file.metadata?.ai_summary ?? undefined,
     tags: file.tags ?? [],
     status: file.status,
-    errorMessage: file.error_message ?? undefined,
   };
+  if (file.metadata?.ai_title) meta.aiTitle = file.metadata.ai_title;
+  if (file.metadata?.ai_summary) meta.summary = file.metadata.ai_summary;
+  if (file.error_message) meta.errorMessage = file.error_message;
+  return meta;
 }
 
 function CanvasInner() {

@@ -62,7 +62,7 @@ async function extractPdf(filePath: string): Promise<ExtractionResult> {
 
     // If the PDF has no selectable text (scanned doc), run OCR
     if (combined.length < 50) {
-      return extractImageOcr(filePath);
+      return extractPdfOcr(filePath);
     }
 
     return {
@@ -72,7 +72,23 @@ async function extractPdf(filePath: string): Promise<ExtractionResult> {
     };
   } catch (err) {
     console.error('[extraction] PDF failed, attempting OCR:', (err as Error).message);
-    return extractImageOcr(filePath);
+    return extractPdfOcr(filePath);
+  }
+}
+
+async function extractPdfOcr(filePath: string): Promise<ExtractionResult> {
+  const tempBase = path.join(os.tmpdir(), `pc-pdf-${Date.now()}`);
+  const firstPagePng = `${tempBase}.png`;
+
+  try {
+    // Render first PDF page to PNG, then run normal image OCR.
+    await execa('pdftoppm', ['-f', '1', '-singlefile', '-png', filePath, tempBase]);
+    return extractImageOcr(firstPagePng);
+  } catch (err) {
+    console.error('[extraction] PDF OCR fallback failed:', (err as Error).message);
+    return { content: '', wordCount: 0, language: null };
+  } finally {
+    fs.unlink(firstPagePng).catch(() => {});
   }
 }
 
@@ -84,12 +100,27 @@ async function extractImage(filePath: string): Promise<ExtractionResult> {
 }
 
 async function extractImageOcr(filePath: string): Promise<ExtractionResult> {
+  let worker: Awaited<ReturnType<(typeof import('tesseract.js'))['createWorker']>> | null = null;
+
+  // Validate file is readable and non-empty before passing to Tesseract.
+  // A corrupted image will still fail inside the worker, but this eliminates
+  // the trivial cases (0-byte files, missing files) without spinning up a worker.
+  try {
+    const stat = await fs.stat(filePath);
+    if (stat.size === 0) {
+      console.error('[extraction] OCR skipped: file is empty:', filePath);
+      return { content: '', wordCount: 0, language: null };
+    }
+  } catch {
+    console.error('[extraction] OCR skipped: file not accessible:', filePath);
+    return { content: '', wordCount: 0, language: null };
+  }
+
   try {
     const Tesseract = await import('tesseract.js');
-    const worker = await Tesseract.createWorker('eng');
+    worker = await Tesseract.createWorker('eng');
 
     const { data } = await worker.recognize(filePath);
-    await worker.terminate();
 
     const text = data.text.trim();
 
@@ -101,6 +132,10 @@ async function extractImageOcr(filePath: string): Promise<ExtractionResult> {
   } catch (err) {
     console.error('[extraction] OCR failed:', (err as Error).message);
     return { content: '', wordCount: 0, language: null };
+  } finally {
+    if (worker) {
+      await worker.terminate().catch(() => {});
+    }
   }
 }
 
