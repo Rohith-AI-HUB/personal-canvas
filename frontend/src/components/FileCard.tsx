@@ -108,8 +108,6 @@ export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: F
         thumbnailUrl={thumbnailUrl}
         palette={palette}
         fileType={file.file_type}
-        width={width}
-        height={height}
       />
 
       {/* ── Bottom overlay: title + tags, always over the cover ── */}
@@ -234,15 +232,11 @@ function CoverArea({
   thumbnailUrl,
   palette,
   fileType,
-  width,
-  height,
 }: {
   hasCover:     boolean;
   thumbnailUrl: string | null;
   palette:      typeof TYPE_PALETTE[keyof typeof TYPE_PALETTE];
   fileType:     FileRecord['file_type'];
-  width:        number;
-  height:       number;
 }) {
   if (hasCover) {
     // Real cover: thumbnail fills the entire card

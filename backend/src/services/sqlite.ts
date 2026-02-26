@@ -152,15 +152,17 @@ function migrateLegacyContentlessFts(db: Database.Database): void {
 export interface ChatMessageRow {
   id: number;
   session_id: string;
-  role: 'user' | 'assistant';
+  role: ChatRole;
   content: string;
   citations: string | null; // JSON array of file IDs
   created_at: string;
 }
 
-export function insertChatMessage(
+export type ChatRole = 'user' | 'assistant';
+
+export function insertMessage(
   sessionId: string,
-  role: 'user' | 'assistant',
+  role: ChatRole,
   content: string,
   citations: string[] = []
 ): number {
@@ -171,6 +173,9 @@ export function insertChatMessage(
   `).run(sessionId, role, content, JSON.stringify(citations));
   return result.lastInsertRowid as number;
 }
+
+// Backward-compatible alias for older imports.
+export const insertChatMessage = insertMessage;
 
 export function getSessionHistory(
   sessionId: string,

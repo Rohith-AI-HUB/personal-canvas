@@ -6,11 +6,16 @@ import type { FileRecord } from './api';
 import { Canvas } from './components/Canvas';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { ChatPanel } from './components/ChatPanel';
 import './App.css';
 
 export default function App() {
   const editorRef = useRef<Editor | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isChatOpen, setIsChatOpen] = useState(true);
+
+  // One chat session per app launch.
+  const [sessionId] = useState(() => crypto.randomUUID());
 
   const handleFileUploaded = (file: FileRecord) => {
     const editor = editorRef.current;
@@ -43,7 +48,9 @@ export default function App() {
       <div className="workspace">
         {/* Floating search + menu toggle */}
         <div className="topbar">
-          <TopBar getEditor={() => editorRef.current} />
+          <TopBar
+            getEditor={() => editorRef.current}
+          />
         </div>
 
         <Canvas
@@ -51,6 +58,13 @@ export default function App() {
           onMount={(ed) => { editorRef.current = ed; }}
         />
       </div>
+
+      <ChatPanel
+        sessionId={sessionId}
+        isOpen={isChatOpen}
+        onToggle={() => setIsChatOpen((v) => !v)}
+        getEditor={() => editorRef.current}
+      />
     </div>
   );
 }

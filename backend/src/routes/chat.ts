@@ -1,11 +1,13 @@
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { embedText } from '../services/embeddings.js';
 import { searchChunks } from '../services/qdrant.js';
-import { getDb, insertChatMessage, getSessionHistory } from '../services/sqlite.js';
+import { getDb, getSessionHistory, insertMessage, type ChatRole } from '../services/sqlite.js';
 import { streamOllamaChat, type ChatMessage } from '../services/ollama.js';
 
 const MAX_CONTEXT_TOKENS = 6000;
 const APPROX_CHARS_PER_TOKEN = 4;
+const MAX_HISTORY_MESSAGES = 10; // 5 exchanges
+
 const SYSTEM_PROMPT = `You are a personal knowledge assistant with access to the user's file collection.
 Answer questions based only on the provided context. If the answer is not in the context, say so clearly.
 Always cite which files your information comes from using the format [filename].
@@ -14,6 +16,10 @@ Be concise and specific. Do not fabricate information.`;
 interface ChatRequestBody {
   message: string;
   session_id: string;
+  history?: Array<{
+    role: ChatRole;
+    content: string;
+  }>;
 }
 
 interface RetrievedChunk {
@@ -23,21 +29,21 @@ interface RetrievedChunk {
   score: number;
 }
 
-// Build context string within a hard token budget, best chunks first
 function buildContext(chunks: RetrievedChunk[]): { context: string; citedFileIds: string[] } {
   let budget = MAX_CONTEXT_TOKENS;
   const included: RetrievedChunk[] = [];
   const seenFileIds = new Set<string>();
 
-  for (const chunk of chunks) {
+  const ranked = [...chunks].sort((a, b) => b.score - a.score);
+  for (const chunk of ranked) {
     const estimate = Math.ceil(chunk.text.length / APPROX_CHARS_PER_TOKEN);
-    if (estimate > budget) break;
+    if (estimate > budget) continue;
     included.push(chunk);
-    budget -= estimate;
     seenFileIds.add(chunk.file_id);
+    budget -= estimate;
+    if (budget <= 0) break;
   }
 
-  // Group chunks by file for clean context blocks
   const byFile = new Map<string, { filename: string; texts: string[] }>();
   for (const chunk of included) {
     const entry = byFile.get(chunk.file_id) ?? { filename: chunk.filename, texts: [] };
@@ -45,101 +51,124 @@ function buildContext(chunks: RetrievedChunk[]): { context: string; citedFileIds
     byFile.set(chunk.file_id, entry);
   }
 
-  const contextBlocks = [...byFile.values()]
+  const context = [...byFile.values()]
     .map(({ filename, texts }) => `--- File: "${filename}" ---\n${texts.join('\n')}`)
     .join('\n\n');
 
-  return {
-    context: contextBlocks,
-    citedFileIds: [...seenFileIds],
-  };
+  return { context, citedFileIds: [...seenFileIds] };
 }
 
-// Enrich raw Qdrant chunks with filenames from SQLite
-function enrichChunks(
-  rawChunks: Array<{ file_id: string; text: string; score: number }>
-): RetrievedChunk[] {
+function enrichChunks(rawChunks: Array<{ file_id: string; text: string; score: number }>): RetrievedChunk[] {
   if (rawChunks.length === 0) return [];
 
   const db = getDb();
-  const ids = rawChunks.map((c) => c.file_id);
+  const ids = [...new Set(rawChunks.map((chunk) => chunk.file_id))];
   const placeholders = ids.map(() => '?').join(', ');
 
-  const rows = db.prepare(`
-    SELECT f.id, COALESCE(m.ai_title, f.filename) AS display_name
-    FROM files f
-    LEFT JOIN file_metadata m ON m.file_id = f.id
-    WHERE f.id IN (${placeholders})
-  `).all(...ids) as Array<{ id: string; display_name: string }>;
+  const rows = db
+    .prepare(`
+      SELECT f.id, COALESCE(m.ai_title, f.filename) AS display_name
+      FROM files f
+      LEFT JOIN file_metadata m ON m.file_id = f.id
+      WHERE f.id IN (${placeholders})
+    `)
+    .all(...ids) as Array<{ id: string; display_name: string }>;
 
-  const nameMap = new Map(rows.map((r) => [r.id, r.display_name]));
+  const nameMap = new Map(rows.map((row) => [row.id, row.display_name]));
 
   return rawChunks
-    .filter((c) => nameMap.has(c.file_id))
-    .map((c) => ({
-      file_id: c.file_id,
-      filename: nameMap.get(c.file_id)!,
-      text: c.text,
-      score: c.score,
+    .filter((chunk) => nameMap.has(chunk.file_id))
+    .map((chunk) => ({
+      file_id: chunk.file_id,
+      filename: nameMap.get(chunk.file_id)!,
+      text: chunk.text,
+      score: chunk.score,
     }));
 }
 
+function normalizeHistory(history: ChatRequestBody['history']): Array<{ role: ChatRole; content: string }> {
+  if (!Array.isArray(history)) return [];
+
+  return history
+    .filter((entry): entry is { role: ChatRole; content: string } => {
+      if (!entry) return false;
+      const validRole = entry.role === 'user' || entry.role === 'assistant';
+      const validContent = typeof entry.content === 'string' && entry.content.trim().length > 0;
+      return validRole && validContent;
+    })
+    .map((entry) => ({
+      role: entry.role,
+      content: entry.content.trim(),
+    }));
+}
+
+function safeParseCitations(raw: string): string[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is string => typeof value === 'string');
+  } catch {
+    return [];
+  }
+}
+
 export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
-  // POST /api/chat — streams SSE tokens back to client
   fastify.post(
     '/api/chat',
     async (req: FastifyRequest<{ Body: ChatRequestBody }>, reply: FastifyReply) => {
-      const { message, session_id } = req.body ?? {};
+      const { message, session_id, history } = req.body ?? {};
+      const question = message?.trim();
+      const sessionId = session_id?.trim();
 
-      if (!message?.trim() || !session_id?.trim()) {
+      if (!question || !sessionId) {
         return reply.status(400).send({ error: 'message and session_id are required' });
       }
 
-      // 1. Persist user message immediately
-      insertChatMessage(session_id, 'user', message.trim());
+      const providedHistory = normalizeHistory(history);
+      const historyWindow =
+        providedHistory.length > 0
+          ? providedHistory.slice(-MAX_HISTORY_MESSAGES)
+          : getSessionHistory(sessionId, MAX_HISTORY_MESSAGES).map((msg) => ({
+              role: msg.role,
+              content: msg.content,
+            }));
 
-      // 2. Retrieve relevant chunks from Qdrant
-      let rawChunks: Array<{ file_id: string; text: string; score: number }> = [];
-      try {
-        const queryEmbedding = await embedText(message);
-        const scored = await searchChunks(queryEmbedding, 10);
-        rawChunks = scored.map((s) => ({
-          file_id: s.file_id,
-          text: s.text,
-          score: s.score,
-        }));
-      } catch (err) {
-        // Embedding or Qdrant failure — answer without context rather than crashing
-        fastify.log.warn('[chat] RAG retrieval failed, proceeding without context:', err);
+      if (
+        historyWindow.length > 0 &&
+        historyWindow[historyWindow.length - 1]?.role === 'user' &&
+        historyWindow[historyWindow.length - 1]?.content === question
+      ) {
+        historyWindow.pop();
       }
 
-      // 3. Enrich with filenames and assemble context
+      insertMessage(sessionId, 'user', question);
+
+      let rawChunks: Array<{ file_id: string; text: string; score: number }> = [];
+      try {
+        const queryEmbedding = await embedText(question);
+        const scored = await searchChunks(queryEmbedding, 10);
+        rawChunks = scored.map((chunk) => ({
+          file_id: chunk.file_id,
+          text: chunk.text,
+          score: chunk.score,
+        }));
+      } catch (err) {
+        fastify.log.warn({ err }, '[chat] RAG retrieval failed, proceeding without context');
+      }
+
       const enriched = enrichChunks(rawChunks);
       const { context, citedFileIds } = buildContext(enriched);
 
-      // 4. Load last 5 history exchanges (10 messages)
-      const history = getSessionHistory(session_id, 10);
-
-      // 5. Build prompt
-      const promptMessages: ChatMessage[] = [
-        { role: 'system', content: SYSTEM_PROMPT },
-      ];
-
+      const promptMessages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }];
       if (context) {
         promptMessages.push({
           role: 'system',
           content: `Relevant context from the user's files:\n\n${context}`,
         });
       }
+      promptMessages.push(...historyWindow);
+      promptMessages.push({ role: 'user', content: question });
 
-      // Append conversation history (exclude the message we just inserted)
-      for (const msg of history.slice(0, -1)) {
-        promptMessages.push({ role: msg.role, content: msg.content });
-      }
-
-      promptMessages.push({ role: 'user', content: message.trim() });
-
-      // 6. Stream SSE response
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
       reply.raw.setHeader('Connection', 'keep-alive');
@@ -147,39 +176,31 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       reply.raw.flushHeaders();
 
       let fullResponse = '';
-
       const abortController = new AbortController();
       req.raw.on('close', () => abortController.abort());
 
       try {
         for await (const token of streamOllamaChat(promptMessages, abortController.signal)) {
           fullResponse += token;
-          // SSE format: data: <json>\n\n
           reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`);
         }
 
-        // Send citations in final event
-        reply.raw.write(
-          `data: ${JSON.stringify({ done: true, citations: citedFileIds })}\n\n`
-        );
-
-        // Persist assistant response with citations
-        insertChatMessage(session_id, 'assistant', fullResponse, citedFileIds);
+        reply.raw.write(`data: ${JSON.stringify({ done: true, citations: citedFileIds })}\n\n`);
+        insertMessage(sessionId, 'assistant', fullResponse, citedFileIds);
       } catch (err: unknown) {
         const isAbort =
           err instanceof Error &&
-          (err.name === 'AbortError' || err.message.includes('aborted'));
+          (err.name === 'AbortError' || err.message.toLowerCase().includes('aborted'));
 
         if (!isAbort) {
-          fastify.log.error('[chat] Stream error:', err);
+          fastify.log.error({ err }, '[chat] Stream error');
           reply.raw.write(
             `data: ${JSON.stringify({ error: 'Stream failed. Please try again.' })}\n\n`
           );
         }
 
-        // Still persist whatever was generated before the failure
         if (fullResponse) {
-          insertChatMessage(session_id, 'assistant', fullResponse, citedFileIds);
+          insertMessage(sessionId, 'assistant', fullResponse, citedFileIds);
         }
       } finally {
         reply.raw.end();
@@ -187,24 +208,31 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
     }
   );
 
-  // GET /api/chat/history?session_id=xxx — load prior messages on mount
   fastify.get(
     '/api/chat/history',
-    async (req: FastifyRequest<{ Querystring: { session_id?: string; limit?: string } }>, reply: FastifyReply) => {
+    async (
+      req: FastifyRequest<{ Querystring: { session_id?: string; limit?: string } }>,
+      reply: FastifyReply
+    ) => {
       const sessionId = req.query.session_id?.trim();
-      if (!sessionId) return reply.status(400).send({ error: 'session_id required' });
+      if (!sessionId) {
+        return reply.status(400).send({ error: 'session_id required' });
+      }
 
-      const limit = Math.min(Number(req.query.limit ?? 50), 100);
+      const rawLimit = Number(req.query.limit ?? 50);
+      const limit = Number.isFinite(rawLimit)
+        ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+        : 50;
+
       const messages = getSessionHistory(sessionId, limit);
-
       return reply.send({
         session_id: sessionId,
-        messages: messages.map((m) => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          citations: m.citations ? (JSON.parse(m.citations) as string[]) : [],
-          created_at: m.created_at,
+        messages: messages.map((msg) => ({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          citations: msg.citations ? safeParseCitations(msg.citations) : [],
+          created_at: msg.created_at,
         })),
       });
     }

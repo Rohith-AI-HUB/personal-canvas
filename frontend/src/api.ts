@@ -71,6 +71,11 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+export interface ChatHistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
@@ -131,6 +136,7 @@ export const api = {
   streamChat: (
     message: string,
     sessionId: string,
+    history: ChatHistoryMessage[],
     onToken: (token: string) => void,
     onDone: (citations: string[]) => void,
     onError: (msg: string) => void
@@ -142,7 +148,7 @@ export const api = {
         const res = await fetch(`${BASE}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message, session_id: sessionId }),
+          body: JSON.stringify({ message, session_id: sessionId, history }),
           signal: controller.signal,
         });
 
@@ -154,27 +160,61 @@ export const api = {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
+        let completed = false;
+        let hadError = false;
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
+          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const raw = line.slice(6).trim();
-            if (!raw) continue;
+          let separator = buffer.indexOf('\n\n');
+          while (separator !== -1) {
+            const eventPayload = buffer.slice(0, separator);
+            buffer = buffer.slice(separator + 2);
+
+            const dataLine = eventPayload
+              .split('\n')
+              .find((line) => line.startsWith('data:'));
+            if (!dataLine) {
+              separator = buffer.indexOf('\n\n');
+              continue;
+            }
+
+            const raw = dataLine.slice(5).trim();
+            if (!raw) {
+              separator = buffer.indexOf('\n\n');
+              continue;
+            }
 
             let parsed: Record<string, unknown>;
-            try { parsed = JSON.parse(raw); } catch { continue; }
+            try {
+              parsed = JSON.parse(raw) as Record<string, unknown>;
+            } catch {
+              separator = buffer.indexOf('\n\n');
+              continue;
+            }
 
-            if (parsed.token) onToken(parsed.token as string);
-            if (parsed.done) onDone((parsed.citations as string[]) ?? []);
-            if (parsed.error) onError(parsed.error as string);
+            if (typeof parsed.token === 'string') onToken(parsed.token);
+            if (parsed.done === true) {
+              const citations = Array.isArray(parsed.citations)
+                ? parsed.citations.filter((id): id is string => typeof id === 'string')
+                : [];
+              completed = true;
+              onDone(citations);
+            }
+            if (typeof parsed.error === 'string') {
+              hadError = true;
+              onError(parsed.error);
+            }
+
+            separator = buffer.indexOf('\n\n');
           }
+        }
+
+        if (!completed && !hadError && !controller.signal.aborted) {
+          onDone([]);
         }
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') return;
