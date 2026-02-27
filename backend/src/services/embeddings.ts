@@ -52,12 +52,27 @@ export function chunkText(text: string, chunkSize = 500, overlap = 50): string[]
 
   if (tokens.length === 0) return [];
 
+  // For short documents, emit a single chunk rather than silently returning [].
+  // The per-chunk minimum is the smaller of 100 tokens or half the total token
+  // count — this ensures any file with at least 1 word gets indexed.
+  const minChunkTokens = Math.min(100, Math.ceil(tokens.length / 2));
+
   const chunks: string[] = [];
   const step = Math.max(1, chunkSize - overlap);
 
   for (let start = 0; start < tokens.length; start += step) {
     const slice = tokens.slice(start, start + chunkSize);
-    if (slice.length < 100) continue;
+    if (slice.length < minChunkTokens) {
+      // Last slice is too small on its own — merge it into the previous chunk
+      // to avoid a dangling fragment, unless there's no previous chunk.
+      if (chunks.length > 0) {
+        chunks[chunks.length - 1] += ' ' + slice.join(' ');
+      } else {
+        // Only chunk and it's short — emit it anyway so the file is indexed.
+        chunks.push(slice.join(' '));
+      }
+      break;
+    }
     chunks.push(slice.join(' '));
   }
 

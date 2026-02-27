@@ -81,11 +81,24 @@ async function extractPdfOcr(filePath: string): Promise<ExtractionResult> {
   const firstPagePng = `${tempBase}.png`;
 
   try {
-    // Render first PDF page to PNG, then run normal image OCR.
+    // Render first PDF page to PNG using pdftoppm (part of poppler-utils).
+    // Required system dependency: install with:
+    //   Windows (via choco): choco install poppler
+    //   macOS:               brew install poppler
+    //   Ubuntu/Debian:       apt-get install poppler-utils
+    // Falls back to empty content if poppler is not installed.
     await execa('pdftoppm', ['-f', '1', '-singlefile', '-png', filePath, tempBase]);
     return extractImageOcr(firstPagePng);
   } catch (err) {
-    console.error('[extraction] PDF OCR fallback failed:', (err as Error).message);
+    const msg = (err as Error).message ?? '';
+    if (msg.includes('ENOENT') || msg.includes('not found') || msg.includes('not recognized')) {
+      console.warn(
+        '[extraction] PDF OCR skipped: pdftoppm not found. ' +
+        'Install poppler-utils to enable OCR for scanned PDFs.'
+      );
+    } else {
+      console.error('[extraction] PDF OCR fallback failed:', msg);
+    }
     return { content: '', wordCount: 0, language: null };
   } finally {
     fs.unlink(firstPagePng).catch(() => {});
@@ -140,9 +153,32 @@ async function extractImageOcr(filePath: string): Promise<ExtractionResult> {
 }
 
 // ─────────────────────────────────────────────
+// Transcription size limit
+// Auto-transcription is skipped for files larger than this threshold.
+// Override via TRANSCRIPTION_MAX_MB in .env (default: 100 MB).
+// Set to 0 to disable the limit entirely.
+// ─────────────────────────────────────────────
+function getMaxTranscriptionBytes(): number {
+  const mb = parseFloat(process.env.TRANSCRIPTION_MAX_MB ?? '100');
+  if (isNaN(mb) || mb <= 0) return Infinity;
+  return mb * 1024 * 1024;
+}
+
+// ─────────────────────────────────────────────
 // Video — ffmpeg audio extraction → Groq Whisper
 // ─────────────────────────────────────────────
 async function extractVideo(filePath: string): Promise<ExtractionResult> {
+  // Check size limit before spinning up ffmpeg / Whisper
+  try {
+    const stat = await fs.stat(filePath);
+    const maxBytes = getMaxTranscriptionBytes();
+    if (stat.size > maxBytes) {
+      const limitMb = Math.round(maxBytes / 1024 / 1024);
+      console.warn(`[extraction] Video transcription skipped: file exceeds ${limitMb} MB limit (${Math.round(stat.size / 1024 / 1024)} MB). Set TRANSCRIPTION_MAX_MB in .env to raise the limit.`);
+      return { content: '', wordCount: 0, language: null };
+    }
+  } catch { /* non-fatal — proceed and let downstream errors handle it */ }
+
   const tempAudio = path.join(os.tmpdir(), `pc-audio-${Date.now()}.wav`);
 
   try {
@@ -170,6 +206,17 @@ async function extractVideo(filePath: string): Promise<ExtractionResult> {
 // Audio — Groq Whisper transcription
 // ─────────────────────────────────────────────
 async function extractAudio(filePath: string): Promise<ExtractionResult> {
+  // Check size limit
+  try {
+    const stat = await fs.stat(filePath);
+    const maxBytes = getMaxTranscriptionBytes();
+    if (stat.size > maxBytes) {
+      const limitMb = Math.round(maxBytes / 1024 / 1024);
+      console.warn(`[extraction] Audio transcription skipped: file exceeds ${limitMb} MB limit (${Math.round(stat.size / 1024 / 1024)} MB). Set TRANSCRIPTION_MAX_MB in .env to raise the limit.`);
+      return { content: '', wordCount: 0, language: null };
+    }
+  } catch { /* non-fatal */ }
+
   try {
     const transcript = await transcribeAudio(filePath);
 

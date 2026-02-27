@@ -8,6 +8,11 @@ const MAX_CONTEXT_TOKENS = 6000;
 const APPROX_CHARS_PER_TOKEN = 4;
 const MAX_HISTORY_MESSAGES = 10; // 5 exchanges
 
+// Hard cap on user message length.
+// At 4 chars/token this is ~2000 tokens — enough for any reasonable question
+// while preventing a malformed/huge input from consuming the entire context budget.
+const MAX_QUESTION_CHARS = 8000;
+
 const SYSTEM_PROMPT = `You are a personal knowledge assistant with access to the user's file collection.
 Answer questions based only on the provided context. If the answer is not in the context, say so clearly.
 Always cite which files your information comes from using the format [filename].
@@ -124,6 +129,13 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(400).send({ error: 'message and session_id are required' });
       }
 
+      // Truncate at the character budget so a huge paste cannot push context
+      // out of the prompt or cause the embedding model to fail silently.
+      const safeQuestion =
+        question.length > MAX_QUESTION_CHARS
+          ? question.slice(0, MAX_QUESTION_CHARS) + ' [message truncated]'
+          : question;
+
       const providedHistory = normalizeHistory(history);
       const historyWindow =
         providedHistory.length > 0
@@ -136,16 +148,16 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       if (
         historyWindow.length > 0 &&
         historyWindow[historyWindow.length - 1]?.role === 'user' &&
-        historyWindow[historyWindow.length - 1]?.content === question
+        historyWindow[historyWindow.length - 1]?.content === safeQuestion
       ) {
         historyWindow.pop();
       }
 
-      insertMessage(sessionId, 'user', question);
+      insertMessage(sessionId, 'user', safeQuestion);
 
       let rawChunks: Array<{ file_id: string; text: string; score: number }> = [];
       try {
-        const queryEmbedding = await embedText(question);
+        const queryEmbedding = await embedText(safeQuestion);
         const scored = await searchChunks(queryEmbedding, 10);
         rawChunks = scored.map((chunk) => ({
           file_id: chunk.file_id,
@@ -167,7 +179,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
         });
       }
       promptMessages.push(...historyWindow);
-      promptMessages.push({ role: 'user', content: question });
+      promptMessages.push({ role: 'user', content: safeQuestion });
 
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');

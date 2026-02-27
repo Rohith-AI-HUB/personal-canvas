@@ -55,15 +55,20 @@ type EmbeddingPayload = {
 async function indexFileContent(fileId: string, content: string, payload: EmbeddingPayload): Promise<number> {
   const chunks = chunkText(content, 500, 50);
   if (chunks.length === 0) {
+    // Nothing to index — wipe any stale vectors from a previous ingest run.
     await deleteByFileId(fileId);
     return 0;
   }
 
+  // Embed ALL chunks BEFORE touching Qdrant.
+  // If any embed call fails we throw here and the catch block in runIngestPipeline
+  // marks the file pending/error — existing Qdrant vectors are left intact.
   const embeddings: number[][] = [];
   for (const chunk of chunks) {
     embeddings.push(await embedText(chunk));
   }
 
+  // All embeddings succeeded — now it is safe to replace the stored vectors.
   await deleteByFileId(fileId);
   await upsertChunks(fileId, chunks, embeddings, payload);
 

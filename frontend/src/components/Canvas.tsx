@@ -148,12 +148,15 @@ function CanvasInner() {
   }, [editor, startPolling, updateShapeFromFile]);
 
   useEffect(() => {
+    // Sweep every 5 seconds (not 1) — starts polling for any file that somehow
+    // missed the initial startPolling call (e.g. added by another tab/window).
+    // startPolling is idempotent so redundant calls are safe.
     const sweep = setInterval(() => {
       for (const [fileId, file] of fileStore.entries()) {
         if (file.status === 'complete' || file.status === 'error') continue;
         startPolling(fileId, editor);
       }
-    }, 1000);
+    }, 5000);
 
     return () => clearInterval(sweep);
   }, [editor, startPolling]);
@@ -260,22 +263,43 @@ export function Canvas({ onFileDropped, onMount }: CanvasProps) {
     editorRef.current = ed;
     onMount?.(ed);
 
-    ed.registerExternalContentHandler('files', async ({ point, files: droppedFiles }) => {
-      const canvasPoint = point ?? { x: 100, y: 100 };
-      for (let i = 0; i < droppedFiles.length; i++) {
-        await uploadAndCreateShape(
-          ed,
-          droppedFiles[i],
-          canvasPoint.x + i * (CARD_WIDTH + 20),
-          canvasPoint.y,
-          onFileDropped
-        );
-      }
-    });
+    // Suppress tldraw's built-in media/file handlers so every drop goes through
+    // our single DOM onDrop path below. Without this, tldraw intercepts image and
+    // video drops before the DOM event fires, causing those file types to be handled
+    // twice (once by tldraw's default handler, once by ours) or not at all.
+    ed.registerExternalContentHandler('files', async () => {});
+    ed.registerExternalContentHandler('url',   async () => {});
+    ed.registerExternalContentHandler('text',  async () => {});
+  }, [onMount]);
 
-    ed.registerExternalContentHandler('url', async () => {});
-    ed.registerExternalContentHandler('text', async () => {});
-  }, [onFileDropped, onMount]);
+  // Clipboard paste: images pasted from clipboard land at viewport center
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed) return;
+
+    async function onPaste(e: ClipboardEvent) {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.type.startsWith('image/'));
+      if (!imageItem) return;
+
+      e.preventDefault();
+      const blob = imageItem.getAsFile();
+      if (!blob || !editorRef.current) return;
+
+      const ext  = blob.type.split('/')[1] ?? 'png';
+      const name = `paste-${Date.now()}.${ext}`;
+      const file = new File([blob], name, { type: blob.type });
+
+      const vp = editorRef.current.getViewportPageBounds();
+      const x  = vp.x + vp.w / 2 - CARD_WIDTH  / 2;
+      const y  = vp.y + vp.h / 2 - CARD_HEIGHT / 2;
+
+      await uploadAndCreateShape(editorRef.current, file, x, y, onFileDropped);
+    }
+
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [editor, onFileDropped]); // re-register when editor mounts
 
   const handleDomDrop = useCallback(
     async (e: DragEvent<HTMLDivElement>) => {

@@ -303,12 +303,28 @@ function hybridRank(
 }
 
 function ftsQuery(query: string): string {
-  return query
+  // Strip characters that would produce invalid FTS5 syntax.
+  const cleaned = query.replace(/["*()]/g, '').trim();
+  if (!cleaned) return '""';
+
+  const tokens = cleaned
     .split(/\s+/)
-    .map((token) => token.replace(/["*]/g, '').trim())
-    .filter(Boolean)
-    .map((token) => `"${token}"*`)
-    .join(' ');
+    .filter(Boolean);
+
+  if (tokens.length === 0) return '""';
+
+  // For multi-word queries, emit two parallel clauses joined with OR:
+  //   1. Exact phrase match — highest precision, matches the full phrase in order.
+  //   2. All-tokens prefix match — higher recall, every word must appear somewhere.
+  // FTS5 ranks exact phrase matches higher by default, so precision wins when both hit.
+  if (tokens.length > 1) {
+    const phraseClause = `"${tokens.join(' ')}"`;                    // "neural networks"
+    const prefixClause = tokens.map((t) => `"${t}"*`).join(' ');    // "neural"* "networks"*
+    return `${phraseClause} OR ${prefixClause}`;
+  }
+
+  // Single token — prefix match only.
+  return `"${tokens[0]}"*`;
 }
 
 function normalizeFilter(value?: string): string | null {

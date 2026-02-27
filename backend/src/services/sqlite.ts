@@ -127,14 +127,22 @@ function initSchema(db: Database.Database): void {
 }
 
 function migrateLegacyContentlessFts(db: Database.Database): void {
-  const row = db.prepare(`
-    SELECT sql
-    FROM sqlite_master
-    WHERE type = 'table' AND name = 'files_fts'
-  `).get() as { sql?: string } | undefined;
+  // Detect a legacy contentless FTS table by checking for the hidden "_config"
+  // shadow table that stores FTS5 options, then reading the content= setting.
+  // This is more robust than SQL string matching, which can fail on whitespace
+  // variations in how SQLite serialises the CREATE statement.
+  let isLegacyContentless = false;
+  try {
+    const configRow = db.prepare(
+      `SELECT v FROM files_fts_config WHERE k = 'content'`
+    ).get() as { v?: string } | undefined;
+    // An empty string value means contentless; a real table name or absence means normal.
+    isLegacyContentless = configRow?.v === '';
+  } catch {
+    // files_fts_config doesn't exist (table was just created) — nothing to migrate.
+    return;
+  }
 
-  const sql = row?.sql ?? '';
-  const isLegacyContentless = sql.includes("content=''");
   if (!isLegacyContentless) return;
 
   db.exec(`

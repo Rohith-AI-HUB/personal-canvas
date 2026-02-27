@@ -1,4 +1,4 @@
-const BASE = 'http://127.0.0.1:3001';
+const BASE = 'http://localhost:3001';
 
 export type FileStatus = 'pending' | 'processing' | 'complete' | 'error';
 
@@ -147,6 +147,18 @@ export const api = {
   /** Retry AI processing for a file in error state. */
   retryFile: (id: string): Promise<{ queued: boolean }> =>
     request(`/api/files/${id}/retry`, { method: 'POST' }),
+
+  /** Force re-run AI analysis regardless of current status. */
+  reanalyzeFile: (id: string): Promise<{ queued: boolean }> =>
+    request(`/api/files/${id}/reanalyze`, { method: 'POST' }),
+
+  /** Manually update a file's title and/or tags (source='manual'). */
+  patchFile: (id: string, patch: { title?: string; tags?: string[] }): Promise<FileRecord> =>
+    request(`/api/files/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
 
   /** Hybrid search (keyword + semantic). */
   searchFiles: (q: string, opts?: { type?: string; category?: string; folderId?: string; semantic?: boolean; topN?: number }): Promise<SearchResponse> => {

@@ -29,9 +29,10 @@ interface SearchBarProps {
   folderId?: string;
   placeholder?: string;
   onOpenFolder?: (folderId: string) => void | Promise<void>;
+  className?: string;
 }
 
-export function SearchBar({ getEditor, folderId, placeholder, onOpenFolder }: SearchBarProps) {
+export function SearchBar({ getEditor, folderId, placeholder, onOpenFolder, className }: SearchBarProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [filter, setFilter] = useState<TypeFilter>('all');
@@ -169,7 +170,7 @@ export function SearchBar({ getEditor, folderId, placeholder, onOpenFolder }: Se
   const isActive = focused || open;
 
   return (
-    <div style={s.root}>
+    <div style={s.root} className={className}>
       <div
         style={{
           ...s.panel,

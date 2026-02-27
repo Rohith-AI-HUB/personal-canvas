@@ -16,6 +16,7 @@
     "@qdrant/js-client-rest": "^1.17.0",
     "@types/pdf-parse": "^1.1.5",
     "better-sqlite3": "^12.6.2",
+    "canvas": "^3.2.1",
     "dotenv": "^16.4.5",
     "execa": "^9.6.1",
     "fastify": "^4.29.1",

@@ -95,6 +95,22 @@ function MainCanvasInner() {
   useEffect(() => {
     const unsub = editor.store.listen(
       (entry) => {
+        const removedFolderIds = Array.from(new Set(
+          Object.values(entry.changes.removed)
+            .filter((rec: any) => rec?.typeName === 'shape')
+            .map((shape: any) => shape?.meta?.folderId ?? shape?.props?.folderId)
+            .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
+        ));
+
+        if (removedFolderIds.length > 0) {
+          Promise.allSettled(removedFolderIds.map((folderId) => api.deleteFolder(folderId)))
+            .then((results) => {
+              const deleted = removedFolderIds.filter((_, i) => results[i].status === 'fulfilled');
+              deleted.forEach((folderId) => folderStore.delete(folderId));
+            })
+            .catch((err) => console.error('Folder delete sync failed:', err));
+        }
+
         const updates: NodeUpdate[] = [];
         for (const [, next] of Object.values(entry.changes.updated) as [TLShape, TLShape][]) {
           if (next.typeName === 'shape' && (next as any).meta?.folderId) {

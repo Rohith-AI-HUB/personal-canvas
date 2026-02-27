@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import {
   Tldraw,
   createShapeId,
@@ -15,6 +15,9 @@ import {
   setRetryHandler,
   type FileCardMeta,
 } from './FileCard';
+import { FileContextMenu, type ContextMenuAction } from './FileContextMenu';
+import { FileInspector } from './FileInspector';
+import { ArrangeToolbar } from './ArrangeToolbar';
 import { api, type FileRecord, type FolderRecord, type NodeUpdate } from '../api';
 
 const SHAPE_UTILS = [FileCardShapeUtil];
@@ -122,6 +125,28 @@ function FolderCanvasInner({ folder, canvasId, onRetry, onFilesChanged }: InnerP
   useEffect(() => {
     const unsub = editor.store.listen(
       (entry) => {
+        const removedFileIds = Array.from(new Set(
+          Object.values(entry.changes.removed)
+            .filter((rec: any) => rec?.typeName === 'shape')
+            .map((shape: any) => shape?.meta?.fileId ?? shape?.props?.fileId)
+            .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0)
+        ));
+
+        if (removedFileIds.length > 0) {
+          const isHardDelete =
+            (editor as any).getShiftKey?.() === true || (editor as any).shiftKey === true;
+          const removeOp = (fileId: string) =>
+            isHardDelete ? api.deleteFile(fileId) : api.removeFileFromFolder(folder.id, fileId);
+
+          Promise.allSettled(removedFileIds.map(removeOp))
+            .then((results) => {
+              const deleted = removedFileIds.filter((_, i) => results[i].status === 'fulfilled');
+              deleted.forEach((fileId) => fileStore.delete(fileId));
+              if (deleted.length) onFilesChanged();
+            })
+            .catch((err) => console.error('File delete sync failed:', err));
+        }
+
         const updates: NodeUpdate[] = [];
         for (const [, next] of Object.values(entry.changes.updated) as [TLShape, TLShape][]) {
           if (next.typeName === 'shape' && (next as any).meta?.fileId) {
@@ -142,7 +167,7 @@ function FolderCanvasInner({ folder, canvasId, onRetry, onFilesChanged }: InnerP
       { source: 'user', scope: 'document' }
     );
     return unsub;
-  }, [editor, canvasId]);
+  }, [editor, canvasId, folder.id, onFilesChanged]);
 
   return null;
 }
@@ -195,13 +220,27 @@ export async function uploadAndAddToFolder(
 
 interface FolderCanvasProps {
   folder:          FolderRecord;
-  onFilesChanged:  () => void;   // called when files added/status changed → refresh folder cover
+  onFilesChanged:  () => void;
   onMount?:        (editor: Editor) => void;
 }
 
+interface ContextMenu {
+  x:      number;
+  y:      number;
+  fileId: string;
+}
+
+interface Inspector {
+  x:      number;
+  y:      number;
+  fileId: string;
+}
+
 export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasProps) {
-  const [editor, setEditor] = useState<Editor | null>(null);
-  const editorRef = useRef<Editor | null>(null);
+  const [editor, setEditor]           = useState<Editor | null>(null);
+  const editorRef                     = useRef<Editor | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
+  const [inspector,   setInspector]   = useState<Inspector | null>(null);
   const canvasId  = `folder:${folder.id}`;
 
   const handleRetry = useCallback(async (fileId: string) => {
@@ -221,6 +260,127 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
       } as any);
     } catch (err) { console.error('Retry failed:', err); }
   }, []);
+
+  const handleReanalyze = useCallback(async (fileId: string) => {
+    try {
+      await api.reanalyzeFile(fileId);
+      const existing = fileStore.get(fileId);
+      if (!existing || !editorRef.current) return;
+      const optimistic: FileRecord = { ...existing, status: 'pending', retry_count: 0, error_message: null };
+      fileStore.set(fileId, optimistic);
+      const shapeId = createShapeId(fileId);
+      const shape   = editorRef.current.getShape(shapeId);
+      if (!shape) return;
+      editorRef.current.updateShape({
+        id: shapeId, type: 'file-card',
+        meta: buildCardMeta(optimistic),
+        props: { ...(shape as any).props, _v: ((shape as any).props._v ?? 0) + 1 },
+      } as any);
+    } catch (err) { console.error('Re-analyze failed:', err); }
+  }, []);
+
+  const handleContextMenuCapture = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+
+    const pagePoint = ed.screenToPage({ x: e.clientX, y: e.clientY });
+    const shapes    = ed.getCurrentPageShapes();
+    const hit       = shapes.find((s: any) => {
+      if (s.type !== 'file-card') return false;
+      const w = s.props?.w ?? CARD_WIDTH;
+      const h = s.props?.h ?? CARD_HEIGHT;
+      return (
+        pagePoint.x >= s.x && pagePoint.x <= s.x + w &&
+        pagePoint.y >= s.y && pagePoint.y <= s.y + h
+      );
+    });
+
+    if (!hit) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    (e.nativeEvent as MouseEvent).stopImmediatePropagation?.();
+    const fileId = (hit as any).props?.fileId ?? (hit as any).meta?.fileId;
+    if (!fileId) return;
+
+    setContextMenu({ x: e.clientX, y: e.clientY, fileId });
+  }, []);
+
+  const handleInspectorSaved = useCallback((updated: FileRecord) => {
+    fileStore.set(updated.id, updated);
+    const ed = editorRef.current;
+    if (!ed) return;
+    const shapeId = createShapeId(updated.id);
+    const shape   = ed.getShape(shapeId);
+    if (!shape) return;
+    ed.updateShape({
+      id: shapeId, type: 'file-card',
+      meta: buildCardMeta(updated),
+      props: { ...(shape as any).props, _v: ((shape as any).props._v ?? 0) + 1 },
+    } as any);
+  }, []);
+
+  const contextMenuActions = useCallback((fileId: string): ContextMenuAction[] => {
+    const file = fileStore.get(fileId);
+    return [
+      {
+        label: 'Edit title & tags',
+        icon:  <EditIcon />,
+        onClick: () => {
+          setInspector({ x: contextMenu!.x + 210, y: contextMenu!.y, fileId });
+        },
+      },
+      {
+        label: 'Re-analyze with AI',
+        icon:  <SparkleIcon />,
+        onClick: () => void handleReanalyze(fileId),
+        disabled: file?.status === 'processing' || file?.status === 'pending',
+      },
+      {
+        label: 'Remove from folder',
+        icon:  <RemoveIcon />,
+        danger: true,
+        onClick: () => {
+          const ed = editorRef.current;
+          if (!ed) return;
+          const shapeId = createShapeId(fileId);
+          ed.deleteShape(shapeId);
+        },
+      },
+    ];
+  }, [handleReanalyze, contextMenu]);
+
+  // Clipboard paste: images pasted from clipboard land on the canvas
+  useEffect(() => {
+    if (!editor) return;
+
+    async function onPaste(e: ClipboardEvent) {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItem = items.find((item) => item.type.startsWith('image/'));
+      if (!imageItem) return;
+
+      e.preventDefault();
+      const blob = imageItem.getAsFile();
+      if (!blob) return;
+
+      // Give the pasted image a timestamped filename
+      const ext  = blob.type.split('/')[1] ?? 'png';
+      const name = `paste-${Date.now()}.${ext}`;
+      const file = new File([blob], name, { type: blob.type });
+
+      const vp = editor!.getViewportPageBounds();
+      const x  = vp.x + vp.w / 2 - CARD_WIDTH  / 2;
+      const y  = vp.y + vp.h / 2 - CARD_HEIGHT / 2;
+
+      await uploadAndAddToFolder(
+        editor!, file, folder.id, x, y,
+        canvasId, onFilesChanged,
+      );
+    }
+
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, [editor, folder.id, canvasId, onFilesChanged]);
 
   const handleMount = useCallback((ed: Editor) => {
     setEditor(ed);
@@ -264,6 +424,7 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
       className="canvas-container"
       onDrop={handleDomDrop}
       onDragOver={(e) => e.preventDefault()}
+      onContextMenuCapture={handleContextMenuCapture}
     >
       <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={true}>
         {editor && (
@@ -275,6 +436,58 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
           />
         )}
       </Tldraw>
+
+      {contextMenu && (
+        <FileContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          actions={contextMenuActions(contextMenu.fileId)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {inspector && (() => {
+        const file = fileStore.get(inspector.fileId);
+        if (!file) return null;
+        return (
+          <FileInspector
+            file={file}
+            x={inspector.x}
+            y={inspector.y}
+            onClose={() => setInspector(null)}
+            onSaved={(updated) => { handleInspectorSaved(updated); }}
+          />
+        );
+      })()}
+
+      {editor && <ArrangeToolbar editor={editor} />}
     </div>
+  );
+}
+
+// ── Context menu icons ────────────────────────────────────────────────────────
+
+function EditIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l1.9 5.8L20 10.5l-4.6 4.3 1.3 6.2L12 18l-4.7 3 1.3-6.2L4 10.5l6.1-1.7z"/>
+    </svg>
+  );
+}
+
+function RemoveIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 6L6 18M6 6l12 12"/>
+    </svg>
   );
 }

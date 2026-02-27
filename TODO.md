@@ -228,7 +228,19 @@
 
 ---
 
-## Phase 5 — Polish
+## Pre-Phase-5 Bug Fixes ✅ COMPLETE
+
+- [x] **BUG #1 (Critical)** `embeddings.ts:chunkText` — short files (< 100 tokens) produced zero chunks, silently leaving the file unindexed in Qdrant. Fixed: `minChunkTokens` now scales with total token count; short content emits a single merged chunk instead of nothing.
+- [x] **BUG #2 (Critical)** `ingestQueue.ts:indexFileContent` — Qdrant vectors were deleted BEFORE embedding, so a Qdrant/Ollama failure mid-ingest destroyed existing vectors with no recovery path. Fixed: embed all chunks first, then delete, then upsert — existing vectors survive any failure.
+- [x] **BUG #3 (Medium)** `extraction.ts:extractPdfOcr` — silent failure when `pdftoppm` (poppler) is not installed. Fixed: differentiated ENOENT (missing binary) from actual errors with a clear install instruction warning.
+- [x] **BUG #4 (Medium)** `search.ts:ftsQuery` — multi-word queries only did per-token prefix search, dropping phrase intent. Fixed: multi-word queries now emit `"full phrase" OR "token1"* "token2"*`, giving FTS5 both precision (phrase) and recall (prefix).
+- [x] **BUG #5 (Medium)** `chat.ts` — no guard on user message length; a 50k-character paste consumed the entire context budget. Fixed: messages truncated at 8000 chars (≈2000 tokens) with `[message truncated]` suffix.
+- [x] **BUG #6 (Minor)** `sqlite.ts:migrateLegacyContentlessFts` — migration detection used fragile SQL string matching (`includes("content=''")`) that breaks on whitespace variants. Fixed: uses `PRAGMA table_info` on the FTS5 `_config` shadow table instead.
+- [x] **BUG #7 (Minor)** `Canvas.tsx` — dual drop handlers (DOM `onDrop` + tldraw `registerExternalContentHandler`) caused media files to be intercepted by tldraw before custom handler could run. Fixed: all tldraw external handlers suppressed; DOM `onDrop` is the sole upload path. Sweep interval reduced from 1s to 5s.
+
+---
+
+
 
 - [ ] Canvas "snap to grid" helper
 - [ ] Canvas "align selected nodes"

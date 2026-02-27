@@ -199,6 +199,95 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.code(200).send({ queued: true });
   });
 
+  // POST /api/files/:id/reanalyze — force re-run AI ingest regardless of current status
+  fastify.post('/api/files/:id/reanalyze', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const db = getDb();
+
+    const file = db
+      .prepare(`SELECT * FROM files WHERE id = ?`)
+      .get(id) as FileRecord | undefined;
+
+    if (!file) return reply.code(404).send({ error: 'Not found' });
+
+    // Clear existing AI metadata so ingest pipeline generates fresh results
+    db.prepare(`DELETE FROM tags WHERE file_id = ? AND source = 'ai'`).run(id);
+    db.prepare(`DELETE FROM file_metadata WHERE file_id = ?`).run(id);
+
+    db.prepare(`
+      UPDATE files
+      SET status = 'pending', retry_count = 0, error_message = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(id);
+
+    // Update FTS to clear stale AI fields
+    db.prepare(`
+      UPDATE files_fts
+      SET ai_title = '', ai_summary = '', ai_category = '', tags = ''
+      WHERE file_id = ?
+    `).run(id);
+
+    enqueueFile({ ...file, status: 'pending', retry_count: 0 });
+
+    return reply.code(200).send({ queued: true });
+  });
+
+  // PATCH /api/files/:id — update manual title and/or tags
+  // Only touches 'manual' source fields; AI-generated data is preserved separately.
+  fastify.patch('/api/files/:id', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id }  = req.params as { id: string };
+    const body    = req.body as { title?: string; tags?: string[] };
+    const db      = getDb();
+
+    const file = db.prepare('SELECT id, status FROM files WHERE id = ?').get(id) as { id: string; status: string } | undefined;
+    if (!file) return reply.code(404).send({ error: 'Not found' });
+
+    const { title, tags } = body;
+    if (title === undefined && tags === undefined) {
+      return reply.code(400).send({ error: 'Provide title and/or tags' });
+    }
+
+    db.transaction(() => {
+      // Update manual title in file_metadata (upsert)
+      if (title !== undefined) {
+        const trimmed = title.trim().slice(0, 200);
+        const exists  = db.prepare('SELECT 1 FROM file_metadata WHERE file_id = ?').get(id);
+        if (exists) {
+          db.prepare('UPDATE file_metadata SET ai_title = ? WHERE file_id = ?').run(trimmed, id);
+        } else {
+          db.prepare(`
+            INSERT INTO file_metadata (file_id, ai_title, ai_summary, ai_category, extracted_text, word_count, language, processed_at)
+            VALUES (?, ?, '', '', '', 0, '', datetime('now'))
+          `).run(id, trimmed);
+        }
+        // Update FTS
+        db.prepare('UPDATE files_fts SET ai_title = ? WHERE file_id = ?').run(trimmed, id);
+      }
+
+      // Replace all manual tags for this file
+      if (tags !== undefined) {
+        const clean = tags
+          .map((t) => t.trim().toLowerCase().replace(/\s+/g, '-'))
+          .filter((t) => t.length > 0 && t.length <= 60)
+          .slice(0, 15);
+
+        db.prepare(`DELETE FROM tags WHERE file_id = ? AND source = 'manual'`).run(id);
+        const insertTag = db.prepare(`INSERT INTO tags (file_id, tag, source) VALUES (?, ?, 'manual')`);
+        for (const tag of clean) insertTag.run(id, tag);
+
+        // Rebuild FTS tag field: AI tags + manual tags combined
+        const allTags = db
+          .prepare('SELECT tag FROM tags WHERE file_id = ?')
+          .all(id) as { tag: string }[];
+        db.prepare('UPDATE files_fts SET tags = ? WHERE file_id = ?')
+          .run(allTags.map((r) => r.tag).join(' '), id);
+      }
+    })();
+
+    const full = getFullFileRecord(id);
+    return reply.send(full);
+  });
+
   // GET /api/thumbnail - serve thumbnail file by absolute path
   // The path param is the absolute path stored in SQLite thumbnail_path
   fastify.get('/api/thumbnail', async (req: FastifyRequest, reply: FastifyReply) => {
