@@ -22,6 +22,7 @@ interface ChatPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   getEditor: () => Editor | null;
+  panelStyle?: CSSProperties;
 }
 
 function uid(): string {
@@ -40,7 +41,7 @@ function toPromptHistory(messages: Message[]): ChatHistoryMessage[] {
     }));
 }
 
-export function ChatPanel({ sessionId, isOpen, onToggle, getEditor }: ChatPanelProps) {
+export function ChatPanel({ sessionId, isOpen, onToggle, getEditor, panelStyle }: ChatPanelProps) {
   const [messages, setMessages]       = useState<Message[]>([]);
   const [input, setInput]             = useState('');
   const [isStreaming, setIsStreaming]  = useState(false);
@@ -174,7 +175,7 @@ export function ChatPanel({ sessionId, isOpen, onToggle, getEditor }: ChatPanelP
   }
 
   return (
-    <div style={s.panel}>
+    <div style={{ ...s.panel, ...panelStyle }}>
       <div style={s.header}>
         <div style={s.headerLeft}>
           <div style={s.headerIcon}><ChatIcon /></div>
