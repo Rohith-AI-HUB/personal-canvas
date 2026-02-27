@@ -15,7 +15,8 @@ export interface FileMetadata {
 
 export interface CanvasNode {
   id: string;
-  file_id: string;
+  file_id: string | null;
+  folder_id: string | null;
   canvas_id: string;
   x: number;
   y: number;
@@ -42,7 +43,20 @@ export interface FileRecord {
 
 export interface NodeUpdate {
   id: string;
-  fileId: string;
+  fileId?: string;
+  folderId?: string;
+  canvasId?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CanvasNodeRecord {
+  id: string;
+  file_id: string | null;
+  folder_id: string | null;
+  canvas_id: string;
   x: number;
   y: number;
   width: number;
@@ -74,6 +88,16 @@ export interface SearchResponse {
 export interface ChatHistoryMessage {
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface FolderRecord {
+  id:                  string;
+  name:                string;
+  cover_color:         string;
+  file_count:          number;
+  created_at:          string;
+  updated_at:          string;
+  preview_thumbnails?: Array<string | null>;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -114,6 +138,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(nodes),
     }),
+
+  /** Load all node positions for a specific canvas. */
+  getCanvasNodes: (canvasId: string): Promise<CanvasNodeRecord[]> =>
+    request(`/api/canvas/${encodeURIComponent(canvasId)}/nodes`),
 
   /** Retry AI processing for a file in error state. */
   retryFile: (id: string): Promise<{ queued: boolean }> =>
@@ -236,6 +264,41 @@ export const api = {
       created_at: string;
     }>;
   }> => request(`/api/chat/history?session_id=${encodeURIComponent(sessionId)}`),
+
+  // ── Folder API ─────────────────────────────────────────────────────────────
+
+  listFolders: (): Promise<FolderRecord[]> =>
+    request('/api/folders'),
+
+  createFolder: (name: string, cover_color?: string): Promise<FolderRecord> =>
+    request('/api/folders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, cover_color }),
+    }),
+
+  updateFolder: (id: string, patch: { name?: string; cover_color?: string }): Promise<FolderRecord> =>
+    request(`/api/folders/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+
+  deleteFolder: (id: string): Promise<void> =>
+    request(`/api/folders/${id}`, { method: 'DELETE' }),
+
+  getFolderFiles: (folderId: string): Promise<FileRecord[]> =>
+    request(`/api/folders/${folderId}/files`),
+
+  addFilesToFolder: (folderId: string, fileIds: string[]): Promise<FolderRecord> =>
+    request(`/api/folders/${folderId}/files`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_ids: fileIds }),
+    }),
+
+  removeFileFromFolder: (folderId: string, fileId: string): Promise<void> =>
+    request(`/api/folders/${folderId}/files/${fileId}`, { method: 'DELETE' }),
 
   /** Admin endpoint to back-fill semantic vectors. */
   reindexVectors: (): Promise<{

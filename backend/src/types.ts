@@ -37,7 +37,8 @@ export interface Tag {
 
 export interface CanvasNode {
   id: string;
-  file_id: string;
+  file_id: string | null;
+  folder_id: string | null;
   canvas_id: string;
   x: number;
   y: number;

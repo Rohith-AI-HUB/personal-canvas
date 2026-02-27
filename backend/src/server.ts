@@ -28,6 +28,7 @@ import { fileRoutes } from './routes/files.js';
 import { canvasRoutes } from './routes/canvas.js';
 import { searchRoutes } from './routes/search.js';
 import { chatRoutes } from './routes/chat.js';
+import { folderRoutes } from './routes/folders.js';
 import { recoverPendingJobs } from './queue/ingestQueue.js';
 import { ensureCollection } from './services/qdrant.js';
 
@@ -108,6 +109,7 @@ async function bootstrap(): Promise<void> {
   await fastify.register(canvasRoutes);
   await fastify.register(searchRoutes);
   await fastify.register(chatRoutes);
+  await fastify.register(folderRoutes);
 
   fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
 

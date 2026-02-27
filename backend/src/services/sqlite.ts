@@ -67,6 +67,7 @@ function initSchema(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS canvas_nodes (
       id          TEXT PRIMARY KEY,
       file_id     TEXT REFERENCES files(id) ON DELETE CASCADE,
+      folder_id   TEXT REFERENCES folders(id) ON DELETE CASCADE,
       canvas_id   TEXT DEFAULT 'main',
       x           REAL NOT NULL DEFAULT 0,
       y           REAL NOT NULL DEFAULT 0,
@@ -97,14 +98,32 @@ function initSchema(db: Database.Database): void {
       extracted_text
     );
 
+    CREATE TABLE IF NOT EXISTS folders (
+      id            TEXT PRIMARY KEY,
+      name          TEXT NOT NULL,
+      cover_color   TEXT NOT NULL DEFAULT '#7A8A9A',
+      file_count    INTEGER NOT NULL DEFAULT 0,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS folder_files (
+      folder_id  TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
+      file_id    TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+      added_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (folder_id, file_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
     CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
     CREATE INDEX IF NOT EXISTS idx_tags_file_id ON tags(file_id);
-    CREATE INDEX IF NOT EXISTS idx_canvas_file_id ON canvas_nodes(file_id);
     CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id);
+    CREATE INDEX IF NOT EXISTS idx_folder_files_folder ON folder_files(folder_id);
+    CREATE INDEX IF NOT EXISTS idx_folder_files_file ON folder_files(file_id);
   `);
 
   migrateLegacyContentlessFts(db);
+  migrateCanvasNodesForFolders(db);
 }
 
 function migrateLegacyContentlessFts(db: Database.Database): void {
@@ -144,6 +163,23 @@ function migrateLegacyContentlessFts(db: Database.Database): void {
     FROM files f
     LEFT JOIN file_metadata fm ON fm.file_id = f.id
     WHERE f.status = 'complete';
+  `);
+}
+
+function migrateCanvasNodesForFolders(db: Database.Database): void {
+  const columns = db.prepare(`PRAGMA table_info(canvas_nodes)`).all() as Array<{ name: string }>;
+  const hasFolderId = columns.some((column) => column.name === 'folder_id');
+
+  if (!hasFolderId) {
+    db.exec(`
+      ALTER TABLE canvas_nodes
+      ADD COLUMN folder_id TEXT REFERENCES folders(id) ON DELETE CASCADE
+    `);
+  }
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_canvas_file_id ON canvas_nodes(file_id);
+    CREATE INDEX IF NOT EXISTS idx_canvas_folder_id ON canvas_nodes(folder_id);
   `);
 }
 
