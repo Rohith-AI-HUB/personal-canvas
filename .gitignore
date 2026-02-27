@@ -28,6 +28,7 @@ storage/db/knowledge.sqlite
 storage/files/
 storage/thumbnails/
 storage/db/qdrant
+
 # Logs
 logs/
 *.log

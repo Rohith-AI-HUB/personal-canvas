@@ -7,7 +7,7 @@
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "cd frontend && npm run dev",
-    "beforeBuildCommand": "cd frontend && npm run build"
+    "beforeBuildCommand": "cd backend && npm run build && cd ../frontend && npm run build"
   },
   "app": {
     "windows": [
@@ -26,6 +26,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../backend/dist/**/*": "backend/dist",
+      "../backend/node_modules/**/*": "backend/node_modules"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

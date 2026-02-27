@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:3001';
+const BASE = 'http://127.0.0.1:3001';
 
 export type FileStatus = 'pending' | 'processing' | 'complete' | 'error';
 

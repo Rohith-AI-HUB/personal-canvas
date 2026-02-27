@@ -4,7 +4,9 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export const STORAGE_ROOT = path.resolve(__dirname, '../../../storage');
+export const STORAGE_ROOT =
+  process.env.BACKEND_STORAGE_ROOT?.trim() ||
+  path.resolve(__dirname, '../../../storage');
 export const FILES_DIR = path.join(STORAGE_ROOT, 'files');
 export const THUMBNAILS_DIR = path.join(STORAGE_ROOT, 'thumbnails');
 

@@ -28,6 +28,7 @@ export default function App() {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [uiError, setUiError] = useState<string | null>(null);
 
   const handleExportFolder = useCallback(async () => {
     const ed = folderEditorRef.current;
@@ -56,10 +57,15 @@ export default function App() {
 
   const handleNewFolder = useCallback(async () => {
     try {
+      setUiError(null);
       const folder = await api.createFolder('New Folder');
       if (mainEditorRef.current) placeFolderShape(mainEditorRef.current, folder);
       setNav({ view: 'folder', folder });
-    } catch (err) { console.error('createFolder:', err); }
+    } catch (err) {
+      console.error('createFolder:', err);
+      const details = err instanceof Error ? err.message : String(err);
+      setUiError(`Unable to create folder. ${details}`);
+    }
   }, []);
 
   const handleFilesChanged = useCallback(async () => {
@@ -313,6 +319,28 @@ export default function App() {
             <ChatBubbleIcon />
             <span>AI Chat</span>
           </button>
+        )}
+
+        {uiError && (
+          <div
+            style={{
+              position: 'fixed',
+              right: 16,
+              top: 16,
+              zIndex: 700,
+              background: '#7f1d1d',
+              color: '#fee2e2',
+              border: '1px solid #ef4444',
+              borderRadius: 10,
+              padding: '10px 12px',
+              fontSize: 12,
+              fontWeight: 600,
+              maxWidth: 440,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.2)',
+            }}
+          >
+            {uiError}
+          </div>
         )}
       </div>
     </div>

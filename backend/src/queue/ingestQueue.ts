@@ -7,9 +7,9 @@ import { deleteByFileId, upsertChunks } from '../services/qdrant.js';
 import type { FileRecord } from '../types.js';
 
 const ingestQueue = new PQueue({
-  concurrency: 1,
-  intervalCap: 1,
-  interval: 2500,
+  concurrency: 2,        // process 2 files in parallel
+  intervalCap: 2,        // allow 2 per interval window
+  interval: 500,         // 500ms window instead of 2500ms
 });
 
 export function enqueueFile(file: FileRecord): void {

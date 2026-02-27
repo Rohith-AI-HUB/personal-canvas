@@ -4,7 +4,10 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.resolve(__dirname, '../../../storage/db/knowledge.sqlite');
+const STORAGE_ROOT =
+  process.env.BACKEND_STORAGE_ROOT?.trim() ||
+  path.resolve(__dirname, '../../../storage');
+const DB_PATH = path.join(STORAGE_ROOT, 'db', 'knowledge.sqlite');
 
 let db: Database.Database | null = null;
 

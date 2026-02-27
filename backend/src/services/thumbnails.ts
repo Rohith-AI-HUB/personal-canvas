@@ -112,7 +112,11 @@ async function renderPdfWithPdfjs(pdfPath: string, dest: string): Promise<string
     verbosity: 0,
   } as any);
 
-  const pdfDoc = await loadingTask.promise;
+  // 15-second timeout to prevent hanging on corrupt/large PDFs
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('pdfjs render timeout')), 15_000)
+  );
+  const pdfDoc = await Promise.race([loadingTask.promise, timeoutPromise]);
   const page = await pdfDoc.getPage(1);
 
   // Scale to give us roughly THUMB_WIDTH pixels wide at 96dpi equivalent
@@ -154,12 +158,11 @@ async function renderPdfWithPdfjs(pdfPath: string, dest: string): Promise<string
 async function generatePdfSvgFallback(dest: string, pdfPath: string): Promise<string> {
   let pageCount = 0;
   try {
-    const { PDFParse } = await import('pdf-parse');
-    const data   = fs.readFileSync(pdfPath);
-    const parser = new PDFParse({ data });
-    const info   = await parser.getInfo();
-    pageCount = info.total ?? 0;
-    await parser.destroy().catch(() => {});
+    const pdfParse = await import('pdf-parse');
+    const parseFn = (pdfParse as any).default ?? pdfParse;
+    const data = fs.readFileSync(pdfPath);
+    const result = await parseFn(data);
+    pageCount = result.numpages ?? 0;
   } catch { /* ignore */ }
 
   const pageLine = pageCount > 0

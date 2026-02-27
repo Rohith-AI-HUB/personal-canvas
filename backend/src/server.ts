@@ -72,7 +72,13 @@ async function bootstrap(): Promise<void> {
 
   // Initialize SQLite with WAL mode.
   const db = getDb();
-  await ensureCollection();
+  try {
+    await ensureCollection();
+  } catch (err) {
+    // Keep backend alive even if vector DB is temporarily unavailable.
+    // Core actions (folders/files/canvas) should still work.
+    fastify.log.warn({ err }, 'Qdrant not ready at startup; continuing with vector features disabled');
+  }
 
   // Cleanup for crash-window leftovers from interrupted uploads.
   await cleanOrphanFiles(db);
@@ -86,6 +92,7 @@ async function bootstrap(): Promise<void> {
       'http://localhost:5173',
       'http://127.0.0.1:5173',
       'tauri://localhost',
+      'http://tauri.localhost',
       'https://tauri.localhost',
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

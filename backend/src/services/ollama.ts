@@ -1,7 +1,7 @@
 import 'dotenv/config';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
-const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL ?? 'gpt-oss-120b';
+const CHAT_MODEL = process.env.OLLAMA_CHAT_MODEL?.trim() || 'llama3.2';
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -31,7 +31,7 @@ export async function* streamOllamaChat(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    throw new Error(`Ollama chat error ${response.status}: ${body}`);
+    throw new Error(`Ollama chat error ${response.status} (model: ${CHAT_MODEL}): ${body}`);
   }
 
   if (!response.body) {
