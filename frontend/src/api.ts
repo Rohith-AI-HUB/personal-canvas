@@ -65,6 +65,7 @@ export interface CanvasNodeRecord {
 
 export interface SearchResult {
   file_id: string;
+  folder_id: string | null;
   filename: string;
   file_type: FileRecord['file_type'];
   ai_title: string | null;
@@ -148,10 +149,11 @@ export const api = {
     request(`/api/files/${id}/retry`, { method: 'POST' }),
 
   /** Hybrid search (keyword + semantic). */
-  searchFiles: (q: string, opts?: { type?: string; category?: string; semantic?: boolean; topN?: number }): Promise<SearchResponse> => {
+  searchFiles: (q: string, opts?: { type?: string; category?: string; folderId?: string; semantic?: boolean; topN?: number }): Promise<SearchResponse> => {
     const params = new URLSearchParams({ q });
     if (opts?.type) params.set('type', opts.type);
     if (opts?.category) params.set('category', opts.category);
+    if (opts?.folderId) params.set('folder_id', opts.folderId);
     if (opts?.semantic === false) params.set('semantic', '0');
     if (opts?.topN) params.set('topN', String(opts.topN));
     return request(`/api/search?${params.toString()}`);

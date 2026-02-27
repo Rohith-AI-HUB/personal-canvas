@@ -8,12 +8,14 @@ type SearchQuery = {
   q?: string;
   type?: string;
   category?: string;
+  folder_id?: string;
   semantic?: string;
   topN?: string;
 };
 
 type SearchResultRow = {
   file_id: string;
+  folder_id: string | null;
   filename: string;
   file_type: string;
   ai_title: string | null;
@@ -45,12 +47,14 @@ export async function searchRoutes(fastify: FastifyInstance): Promise<void> {
 
     const fileType = normalizeFilter(req.query.type);
     const category = normalizeFilter(req.query.category);
+    const folderId = normalizeFolderId(req.query.folder_id);
     const semanticEnabled = req.query.semantic !== '0';
     const topN = parseTopN(req.query.topN);
 
     const semanticPromise = semanticEnabled ? (async () => {
       const embedding = await embedText(query);
-      const chunks = await searchChunks(embedding, topN);
+      const semanticTopN = folderId ? Math.max(topN * 4, 50) : topN;
+      const chunks = await searchChunks(embedding, semanticTopN);
       return chunks.map((chunk) => ({
         file_id: chunk.file_id,
         score: normalizeSemanticScore(chunk.score),
@@ -58,7 +62,7 @@ export async function searchRoutes(fastify: FastifyInstance): Promise<void> {
       })) as SemanticChunk[];
     })() : Promise.resolve([] as SemanticChunk[]);
 
-    const keywordResults = runKeywordSearch(query, fileType, category, topN);
+    const keywordResults = runKeywordSearch(query, fileType, category, folderId, topN);
     if (!semanticEnabled) {
       return reply.send({
         query,
@@ -69,7 +73,7 @@ export async function searchRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const semanticResults = await semanticPromise;
-    const merged = hybridRank(keywordResults, semanticResults, topN, fileType, category);
+    const merged = hybridRank(keywordResults, semanticResults, topN, fileType, category, folderId);
 
     return reply.send({
       query,
@@ -95,12 +99,14 @@ function runKeywordSearch(
   query: string,
   fileType: string | null,
   category: string | null,
+  folderId: string | null,
   topN: number
 ): SearchResultRow[] {
   const db = getDb();
 
   const clauses: string[] = ['files_fts MATCH ?', `f.status = 'complete'`];
   const params: unknown[] = [ftsQuery(query)];
+  const joins: string[] = [];
 
   if (fileType) {
     clauses.push('f.file_type = ?');
@@ -110,12 +116,24 @@ function runKeywordSearch(
     clauses.push('m.ai_category = ?');
     params.push(category);
   }
+  if (folderId) {
+    joins.push('JOIN folder_files ff ON ff.file_id = f.id');
+    clauses.push('ff.folder_id = ?');
+    params.push(folderId);
+  }
 
   params.push(topN);
 
   const sql = `
     SELECT
       f.id AS file_id,
+      (
+        SELECT ff2.folder_id
+        FROM folder_files ff2
+        WHERE ff2.file_id = f.id
+        ORDER BY ff2.added_at DESC
+        LIMIT 1
+      ) AS folder_id,
       f.filename,
       f.file_type,
       f.created_at,
@@ -127,6 +145,7 @@ function runKeywordSearch(
     FROM files_fts
     JOIN files f ON f.id = files_fts.file_id
     LEFT JOIN file_metadata m ON m.file_id = f.id
+    ${joins.join('\n')}
     WHERE ${clauses.join(' AND ')}
     ORDER BY bm25(files_fts) ASC
     LIMIT ?
@@ -144,11 +163,20 @@ function hybridRank(
   semantic: SemanticChunk[],
   topN: number,
   fileType: string | null,
-  category: string | null
+  category: string | null,
+  folderId: string | null
 ) {
   const db = getDb();
+  const allowedFileIds = folderId ? new Set(
+    (db.prepare(`
+      SELECT file_id
+      FROM folder_files
+      WHERE folder_id = ?
+    `).all(folderId) as Array<{ file_id: string }>).map((row) => row.file_id)
+  ) : null;
   const map = new Map<string, {
     file_id: string;
+    folder_id?: string | null;
     filename?: string;
     file_type?: string;
     ai_title?: string | null;
@@ -162,8 +190,10 @@ function hybridRank(
   }>();
 
   for (const row of keyword) {
+    if (allowedFileIds && !allowedFileIds.has(row.file_id)) continue;
     map.set(row.file_id, {
       file_id: row.file_id,
+      folder_id: row.folder_id,
       filename: row.filename,
       file_type: row.file_type,
       ai_title: row.ai_title,
@@ -178,6 +208,7 @@ function hybridRank(
   }
 
   for (const row of semantic) {
+    if (allowedFileIds && !allowedFileIds.has(row.file_id)) continue;
     const existing = map.get(row.file_id);
     if (existing) {
       if (row.score > existing.semantic_score) {
@@ -193,6 +224,7 @@ function hybridRank(
       semantic_score: row.score,
       highlight: null,
       semantic_text: row.text,
+      folder_id: null,
     });
   }
 
@@ -205,6 +237,13 @@ function hybridRank(
     const enriched = db.prepare(`
       SELECT
         f.id AS file_id,
+        (
+          SELECT ff2.folder_id
+          FROM folder_files ff2
+          WHERE ff2.file_id = f.id
+          ORDER BY ff2.added_at DESC
+          LIMIT 1
+        ) AS folder_id,
         f.filename,
         f.file_type,
         f.created_at,
@@ -218,6 +257,7 @@ function hybridRank(
       GROUP BY f.id
     `).all(...missingIds) as Array<{
       file_id: string;
+      folder_id: string | null;
       filename: string;
       file_type: string;
       created_at: string;
@@ -229,6 +269,7 @@ function hybridRank(
     for (const row of enriched) {
       const target = map.get(row.file_id);
       if (!target) continue;
+      target.folder_id = row.folder_id;
       target.filename = row.filename;
       target.file_type = row.file_type;
       target.ai_title = row.ai_title;
@@ -244,6 +285,7 @@ function hybridRank(
     .filter((row) => (category ? row.ai_category === category : true))
     .map((row) => ({
       file_id: row.file_id,
+      folder_id: row.folder_id ?? null,
       filename: row.filename as string,
       file_type: row.file_type as string,
       ai_title: row.ai_title ?? null,
@@ -272,6 +314,12 @@ function ftsQuery(query: string): string {
 function normalizeFilter(value?: string): string | null {
   const normalized = value?.trim().toLowerCase();
   if (!normalized || normalized === 'all') return null;
+  return normalized;
+}
+
+function normalizeFolderId(value?: string): string | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
   return normalized;
 }
 

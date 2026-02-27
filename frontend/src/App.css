@@ -198,7 +198,14 @@
   box-shadow: 0 2px 8px rgba(20, 15, 10, 0.07), 0 1px 3px rgba(20, 15, 10, 0.04);
   font-family: 'Inter', system-ui, sans-serif;
   pointer-events: all;
-  max-width: 560px;
+  width: min(100% - 40px, 980px);
+  max-width: 980px;
+}
+
+.breadcrumb-search {
+  flex: 1;
+  min-width: 220px;
+  max-width: 420px;
 }
 
 .back-btn {

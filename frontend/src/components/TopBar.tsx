@@ -4,9 +4,10 @@ import { SearchBar } from './SearchBar';
 interface TopBarProps {
   getEditor:     () => Editor | null;
   onNewFolder?:  () => void;
+  onOpenFolder?: (folderId: string) => void | Promise<void>;
 }
 
-export function TopBar({ getEditor, onNewFolder }: TopBarProps) {
+export function TopBar({ getEditor, onNewFolder, onOpenFolder }: TopBarProps) {
   return (
     <div style={{
       display: 'flex',
@@ -15,7 +16,7 @@ export function TopBar({ getEditor, onNewFolder }: TopBarProps) {
       width: '100%',
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <SearchBar getEditor={getEditor} />
+        <SearchBar getEditor={getEditor} onOpenFolder={onOpenFolder} />
       </div>
 
       {onNewFolder && (

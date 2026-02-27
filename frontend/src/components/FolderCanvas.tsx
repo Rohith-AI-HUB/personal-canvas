@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import {
   Tldraw,
   createShapeId,
@@ -19,7 +19,7 @@ import { api, type FileRecord, type FolderRecord, type NodeUpdate } from '../api
 
 const SHAPE_UTILS = [FileCardShapeUtil];
 
-function buildCardMeta(file: FileRecord): FileCardMeta {
+export function buildCardMeta(file: FileRecord): FileCardMeta {
   const meta: FileCardMeta = { fileId: file.id, tags: file.tags ?? [], status: file.status };
   if (file.metadata?.ai_title)   meta.aiTitle      = file.metadata.ai_title;
   if (file.metadata?.ai_summary) meta.summary      = file.metadata.ai_summary;
@@ -149,7 +149,7 @@ function FolderCanvasInner({ folder, canvasId, onRetry, onFilesChanged }: InnerP
 
 // ── Upload helper ─────────────────────────────────────────────────────────────
 
-async function uploadAndAddToFolder(
+export async function uploadAndAddToFolder(
   editor: Editor,
   file: File,
   folderId: string,
@@ -202,7 +202,6 @@ interface FolderCanvasProps {
 export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const editorRef = useRef<Editor | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasId  = `folder:${folder.id}`;
 
   const handleRetry = useCallback(async (fileId: string) => {
@@ -260,73 +259,12 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
     }
   }, [folder.id, canvasId, onFilesChanged]);
 
-  const handlePickerFiles = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
-    const ed = editorRef.current;
-    if (!ed) return;
-
-    const files = Array.from(e.target.files ?? []);
-    if (!files.length) return;
-
-    const vp = ed.getViewportPageBounds();
-    const startX = vp.x + Math.max(36, vp.w * 0.15);
-    const startY = vp.y + Math.max(36, vp.h * 0.15);
-
-    for (let i = 0; i < files.length; i++) {
-      await uploadAndAddToFolder(
-        ed, files[i], folder.id,
-        startX + i * (CARD_WIDTH + 24), startY,
-        canvasId, onFilesChanged,
-      );
-    }
-
-    // Reset so selecting the same file again still triggers onChange.
-    e.target.value = '';
-  }, [folder.id, canvasId, onFilesChanged]);
-
   return (
     <div
       className="canvas-container"
       onDrop={handleDomDrop}
       onDragOver={(e) => e.preventDefault()}
     >
-      <input
-        ref={fileInputRef}
-        id="folder-file-input"
-        name="folder-file-input"
-        type="file"
-        multiple
-        onChange={handlePickerFiles}
-        style={{ display: 'none' }}
-      />
-
-      <button
-        type="button"
-        onClick={() => fileInputRef.current?.click()}
-        title="Add files to this folder"
-        style={{
-          position: 'absolute',
-          top: 14,
-          right: 440,
-          zIndex: 520,
-          height: 35,
-          padding: '0 12px',
-          borderRadius: 9,
-          border: '1px solid rgba(28,25,23,0.12)',
-          background: 'rgba(254,252,249,0.92)',
-          backdropFilter: 'blur(14px)',
-          WebkitBackdropFilter: 'blur(14px)',
-          boxShadow: '0 1px 3px rgba(20,15,10,0.06)',
-          cursor: 'pointer',
-          fontFamily: "'Inter', system-ui, sans-serif",
-          fontSize: 12,
-          fontWeight: 600,
-          color: '#1C1917',
-          letterSpacing: '-0.01em',
-        }}
-      >
-        Add Files
-      </button>
-
       <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={true}>
         {editor && (
           <FolderCanvasInner

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import type { Editor } from '@tldraw/tldraw';
 import { api, type FolderRecord } from './api';
 import { MainCanvas, placeFolderShape, refreshFolderShape } from './components/MainCanvas';
-import { FolderCanvas } from './components/FolderCanvas';
+import { FolderCanvas, uploadAndAddToFolder } from './components/FolderCanvas';
+import { CARD_WIDTH } from './components/FileCard';
 import { ChatPanel } from './components/ChatPanel';
 import { Sidebar } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
+import { SearchBar } from './components/SearchBar';
 import './App.css';
 
 type NavState =
@@ -21,6 +23,7 @@ export default function App() {
   const [isZoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
   const zoomMenuRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const openFolder = useCallback(async (folderId: string) => {
     try {
@@ -55,6 +58,28 @@ export default function App() {
       if (mainEditorRef.current) refreshFolderShape(mainEditorRef.current, updated);
     } catch { /* non-fatal */ }
   }, []);
+
+  const handlePickerFiles = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
+    const ed = folderEditorRef.current;
+    const current = navRef.current;
+    if (!ed || current.view !== 'folder') return;
+
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+
+    const vp = ed.getViewportPageBounds();
+    const startX = vp.x + Math.max(36, vp.w * 0.15);
+    const startY = vp.y + Math.max(36, vp.h * 0.15);
+
+    for (let i = 0; i < files.length; i++) {
+      await uploadAndAddToFolder(
+        ed, files[i], current.folder.id,
+        startX + i * (CARD_WIDTH + 24), startY,
+        `folder:${current.folder.id}`, handleFilesChanged,
+      );
+    }
+    e.target.value = '';
+  }, [handleFilesChanged]);
 
   const handleRename = useCallback(async (name: string) => {
     if (nav.view !== 'folder') return;
@@ -109,6 +134,51 @@ export default function App() {
               <BackArrow />
               <span>Library</span>
             </button>
+
+            <div className="breadcrumb-search">
+              <SearchBar
+                getEditor={() => folderEditorRef.current}
+                folderId={nav.folder.id}
+                placeholder="Search inside this book…"
+              />
+            </div>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handlePickerFiles}
+              style={{ display: 'none' }}
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Add files to this folder"
+              style={{
+                height: 30,
+                padding: '0 12px',
+                borderRadius: 9,
+                border: '1px solid rgba(28, 25, 23, 0.12)',
+                background: 'rgba(254, 252, 249, 0.92)',
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
+                boxShadow: '0 1px 3px rgba(20,15,10,0.06)',
+                cursor: 'pointer',
+                fontFamily: "'Inter', system-ui, sans-serif",
+                fontSize: 12,
+                fontWeight: 600,
+                color: '#1C1917',
+                letterSpacing: '-0.01em',
+                marginLeft: 6,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              Add Files
+            </button>
+
             <span className="breadcrumb-sep">›</span>
             <InlineRename
               value={nav.folder.name}
@@ -123,6 +193,7 @@ export default function App() {
             <TopBar
               getEditor={() => mainEditorRef.current}
               onNewFolder={handleNewFolder}
+              onOpenFolder={openFolder}
             />
           </div>
         )}

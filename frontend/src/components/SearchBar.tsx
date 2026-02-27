@@ -26,9 +26,12 @@ const TYPE_COLORS: Record<string, { color: string; soft: string }> = {
 
 interface SearchBarProps {
   getEditor: () => Editor | null;
+  folderId?: string;
+  placeholder?: string;
+  onOpenFolder?: (folderId: string) => void | Promise<void>;
 }
 
-export function SearchBar({ getEditor }: SearchBarProps) {
+export function SearchBar({ getEditor, folderId, placeholder, onOpenFolder }: SearchBarProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [filter, setFilter] = useState<TypeFilter>('all');
@@ -45,10 +48,18 @@ export function SearchBar({ getEditor }: SearchBarProps) {
     return () => clearTimeout(t);
   }, [query]);
 
+  useEffect(() => {
+    setQuery('');
+    setDebouncedQuery('');
+    setResults([]);
+    setOpen(false);
+    setLoadingSemantic(false);
+  }, [folderId]);
+
   // Escape key to clear
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && (focused || open || query)) {
         setQuery('');
         setDebouncedQuery('');
         setResults([]);
@@ -58,12 +69,24 @@ export function SearchBar({ getEditor }: SearchBarProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
+  }, [focused, open, query]);
+
+  // Ctrl/Cmd+K to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   // Search execution
   useEffect(() => {
     const q = debouncedQuery;
-    if (!q) {
+    if (!q || q.length < 2) {
       setResults([]);
       setOpen(false);
       setLoadingSemantic(false);
@@ -77,7 +100,7 @@ export function SearchBar({ getEditor }: SearchBarProps) {
     setLoadingSemantic(true);
 
     // Fast keyword pass first
-    api.searchFiles(q, { type, semantic: false, topN: 20 })
+    api.searchFiles(q, { type, folderId, semantic: false, topN: 20 })
       .then((r) => {
         if (latestReqId.current !== reqId) return;
         setResults(r.keyword_results);
@@ -85,7 +108,7 @@ export function SearchBar({ getEditor }: SearchBarProps) {
       .catch(console.error);
 
     // Full semantic pass
-    api.searchFiles(q, { type, semantic: true, topN: 20 })
+    api.searchFiles(q, { type, folderId, semantic: true, topN: 20 })
       .then((r) => {
         if (latestReqId.current !== reqId) return;
         setResults(r.results);
@@ -95,7 +118,7 @@ export function SearchBar({ getEditor }: SearchBarProps) {
         if (latestReqId.current !== reqId) return;
         setLoadingSemantic(false);
       });
-  }, [debouncedQuery, filter]);
+  }, [debouncedQuery, filter, folderId]);
 
   const resultLabel = useMemo(() => {
     if (!debouncedQuery) return '';
@@ -103,13 +126,19 @@ export function SearchBar({ getEditor }: SearchBarProps) {
     return `${results.length} match${results.length !== 1 ? 'es' : ''}`;
   }, [debouncedQuery, results.length]);
 
-  const handleSelect = (result: SearchResult) => {
+  const handleSelect = async (result: SearchResult) => {
     const editor = getEditor();
     if (!editor) return;
 
     const shapeId = createShapeId(result.file_id);
     const shape = editor.getShape(shapeId);
-    if (!shape) return;
+    if (!shape) {
+      if (!folderId && result.folder_id && onOpenFolder) {
+        await onOpenFolder(result.folder_id);
+        setOpen(false);
+      }
+      return;
+    }
 
     editor.select(shapeId);
     (editor as any).zoomToSelection?.({ animation: { duration: 320 } });
@@ -133,6 +162,8 @@ export function SearchBar({ getEditor }: SearchBarProps) {
         props: { ...(next as any).props, _v: ((next as any).props?._v ?? 0) + 1 },
       } as any);
     }, 1250);
+
+    setOpen(false);
   };
 
   const isActive = focused || open;
@@ -165,11 +196,17 @@ export function SearchBar({ getEditor }: SearchBarProps) {
             name="search-input"
             type="text"
             value={query}
-            placeholder="Search your knowledge base…"
+            placeholder={placeholder ?? 'Search your knowledge base…'}
             onChange={(e) => setQuery(e.target.value)}
             onFocus={() => {
               setFocused(true);
               if (debouncedQuery) setOpen(true);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && results.length > 0) {
+                e.preventDefault();
+                void handleSelect(results[0]);
+              }
             }}
             onBlur={() => setFocused(false)}
             style={s.input}
@@ -193,7 +230,7 @@ export function SearchBar({ getEditor }: SearchBarProps) {
               <CloseIcon />
             </button>
           ) : (
-            <kbd style={s.kbdHint}>⌘K</kbd>
+            <kbd style={s.kbdHint}>Ctrl/⌘K</kbd>
           )}
         </div>
 
@@ -256,7 +293,7 @@ export function SearchBar({ getEditor }: SearchBarProps) {
               <ResultRow
                 key={result.file_id}
                 result={result}
-                onSelect={handleSelect}
+                onSelect={(r) => { void handleSelect(r); }}
               />
             ))}
           </div>
