@@ -144,6 +144,8 @@ function InlineRename({ value, onCommit }: { value: string; onCommit: (v: string
     return (
       <input
         ref={inputRef}
+        id="rename-input"
+        name="rename-input"
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}

@@ -7,6 +7,10 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    host: true,
+    hmr: {
+      clientPort: 5173,
+    },
   },
 
   // Expose VITE_ and TAURI_ env vars to the frontend

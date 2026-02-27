@@ -200,6 +200,8 @@ export function ChatPanel({ sessionId, isOpen, onToggle, getEditor }: ChatPanelP
       <div style={s.inputArea}>
         <textarea
           ref={inputRef}
+          id="chat-textarea"
+          name="chat-textarea"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

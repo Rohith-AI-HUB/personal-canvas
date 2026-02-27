@@ -161,6 +161,8 @@ export function SearchBar({ getEditor }: SearchBarProps) {
 
           <input
             ref={inputRef}
+            id="search-input"
+            name="search-input"
             type="text"
             value={query}
             placeholder="Search your knowledge base…"

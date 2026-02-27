@@ -291,6 +291,8 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
     >
       <input
         ref={fileInputRef}
+        id="folder-file-input"
+        name="folder-file-input"
         type="file"
         multiple
         onChange={handlePickerFiles}
@@ -304,9 +306,9 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
         style={{
           position: 'absolute',
           top: 14,
-          right: 460,
+          right: 440,
           zIndex: 520,
-          height: 34,
+          height: 35,
           padding: '0 12px',
           borderRadius: 9,
           border: '1px solid rgba(28,25,23,0.12)',

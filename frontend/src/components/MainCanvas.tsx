@@ -19,6 +19,34 @@ import { api, type FolderRecord, type NodeUpdate } from '../api';
 const SHAPE_UTILS = [FolderCardShapeUtil];
 const CANVAS_ID   = 'main';
 
+// ── Helpers exported for App.tsx ──────────────────────────────────────────────
+
+export function placeFolderShape(editor: Editor, folder: FolderRecord): void {
+  folderStore.set(folder.id, folder);
+  const shapeId = createShapeId(folder.id);
+  if (editor.getShape(shapeId)) return;
+  const vp = editor.getViewportPageBounds();
+  const x  = vp.x + vp.w / 2 - FOLDER_WIDTH  / 2 + (Math.random() - 0.5) * 200;
+  const y  = vp.y + vp.h / 2 - FOLDER_HEIGHT / 2 + (Math.random() - 0.5) * 100;
+  editor.createShape({
+    id: shapeId, type: 'folder-card', x, y,
+    props: { w: FOLDER_WIDTH, h: FOLDER_HEIGHT, folderId: folder.id, _v: 0 },
+    meta:  { folderId: folder.id },
+  } as any);
+}
+
+export function refreshFolderShape(editor: Editor, folder: FolderRecord): void {
+  folderStore.set(folder.id, folder);
+  const shapeId = createShapeId(folder.id);
+  const shape   = editor.getShape(shapeId);
+  if (!shape) return;
+  editor.updateShape({
+    id: shapeId, type: 'folder-card',
+    meta:  (shape as any).meta,
+    props: { ...(shape as any).props, _v: ((shape as any).props._v ?? 0) + 1 },
+  } as any);
+}
+
 // ── Inner (needs editor context) ─────────────────────────────────────────────
 
 function MainCanvasInner() {
@@ -121,32 +149,4 @@ export function MainCanvas({ onOpenFolder, onMount }: MainCanvasProps) {
       </Tldraw>
     </div>
   );
-}
-
-// ── Helpers exported for App.tsx ──────────────────────────────────────────────
-
-export function placeFolderShape(editor: Editor, folder: FolderRecord): void {
-  folderStore.set(folder.id, folder);
-  const shapeId = createShapeId(folder.id);
-  if (editor.getShape(shapeId)) return;
-  const vp = editor.getViewportPageBounds();
-  const x  = vp.x + vp.w / 2 - FOLDER_WIDTH  / 2 + (Math.random() - 0.5) * 200;
-  const y  = vp.y + vp.h / 2 - FOLDER_HEIGHT / 2 + (Math.random() - 0.5) * 100;
-  editor.createShape({
-    id: shapeId, type: 'folder-card', x, y,
-    props: { w: FOLDER_WIDTH, h: FOLDER_HEIGHT, folderId: folder.id, _v: 0 },
-    meta:  { folderId: folder.id },
-  } as any);
-}
-
-export function refreshFolderShape(editor: Editor, folder: FolderRecord): void {
-  folderStore.set(folder.id, folder);
-  const shapeId = createShapeId(folder.id);
-  const shape   = editor.getShape(shapeId);
-  if (!shape) return;
-  editor.updateShape({
-    id: shapeId, type: 'folder-card',
-    meta:  (shape as any).meta,
-    props: { ...(shape as any).props, _v: ((shape as any).props._v ?? 0) + 1 },
-  } as any);
 }
