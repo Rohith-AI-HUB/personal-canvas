@@ -308,7 +308,7 @@ export function Canvas({ onFileDropped, onMount }: CanvasProps) {
       onDrop={handleDomDrop}
       onDragOver={(e) => e.preventDefault()}
     >
-      <Tldraw shapeUtils={CUSTOM_SHAPE_UTILS} onMount={handleMount} hideUi={false}>
+      <Tldraw shapeUtils={CUSTOM_SHAPE_UTILS} onMount={handleMount} hideUi={true}>
         {editor && <CanvasInner />}
       </Tldraw>
     </div>

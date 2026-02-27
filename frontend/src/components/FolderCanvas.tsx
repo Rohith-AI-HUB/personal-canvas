@@ -327,7 +327,7 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
         Add Files
       </button>
 
-      <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={false}>
+      <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={true}>
         {editor && (
           <FolderCanvasInner
             folder={folder}

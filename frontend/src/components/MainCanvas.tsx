@@ -144,7 +144,7 @@ export function MainCanvas({ onOpenFolder, onMount }: MainCanvasProps) {
 
   return (
     <div className="canvas-container">
-      <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={false}>
+      <Tldraw shapeUtils={SHAPE_UTILS} onMount={handleMount} hideUi={true}>
         {editor && <MainCanvasInner />}
       </Tldraw>
     </div>
