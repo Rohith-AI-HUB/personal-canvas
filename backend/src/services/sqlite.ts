@@ -239,6 +239,15 @@ export function getSessionHistory(
   `).all(sessionId, limit).reverse() as ChatMessageRow[];
 }
 
+export function deleteSessionMessages(sessionId: string): number {
+  const db = getDb();
+  const result = db.prepare(`
+    DELETE FROM chat_messages
+    WHERE session_id = ?
+  `).run(sessionId);
+  return Number(result.changes ?? 0);
+}
+
 export function closeDb(): void {
   if (db) {
     db.close();

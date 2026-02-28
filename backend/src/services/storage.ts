@@ -38,6 +38,22 @@ export async function saveFile(
 }
 
 /**
+ * Write text content directly to permanent storage as a .txt file.
+ * Used when the AI generates a summary/report that should become a canvas file.
+ */
+export async function saveTextFile(
+  content: string,
+  fileId: string,
+  filename: string
+): Promise<string> {
+  const ext = path.extname(filename) || '.txt';
+  const safeName = `${fileId}${ext}`;
+  const destPath = path.join(FILES_DIR, safeName);
+  await fs.promises.writeFile(destPath, content, 'utf8');
+  return destPath;
+}
+
+/**
  * Delete a file and its thumbnail from disk.
  * Non-throwing — logs errors but does not propagate.
  */

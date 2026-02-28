@@ -279,6 +279,10 @@ export const api = {
     }>;
   }> => request(`/api/chat/history?session_id=${encodeURIComponent(sessionId)}`),
 
+  /** Delete all messages for a specific chat session. */
+  deleteChatSession: (sessionId: string): Promise<{ ok: boolean; session_id: string; deleted: number }> =>
+    request(`/api/chat/session?session_id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' }),
+
   // ── Folder API ─────────────────────────────────────────────────────────────
 
   listFolders: (): Promise<FolderRecord[]> =>
@@ -313,6 +317,29 @@ export const api = {
 
   removeFileFromFolder: (folderId: string, fileId: string): Promise<void> =>
     request(`/api/folders/${folderId}/files/${fileId}`, { method: 'DELETE' }),
+
+  /** Fetch full extracted text of a file for @ mention deep context. */
+  getFileContent: (id: string): Promise<{
+    file_id: string;
+    filename: string;
+    file_type: string;
+    ai_title: string | null;
+    ai_summary: string | null;
+    extracted_text: string | null;
+  }> => request(`/api/files/${id}/content`),
+
+  /** Create a new text file from AI-generated content. Returns the file record + whether it was a duplicate. */
+  createTextFile: (filename: string, content: string, sourceFileId?: string): Promise<{
+    duplicate: boolean;
+    file: FileRecord;
+  }> => request('/api/files/create-text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filename, content, source_file_id: sourceFileId }),
+  }),
+
+  /** Raw file URL for in-app viewers (PDF, DOCX, code). */
+  rawFileUrl: (fileId: string): string => `${BASE}/api/files/${fileId}/raw`,
 
   /** Admin endpoint to back-fill semantic vectors. */
   reindexVectors: (): Promise<{

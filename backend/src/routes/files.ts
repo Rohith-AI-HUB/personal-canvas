@@ -48,6 +48,7 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
       if (existing) {
         fs.unlink(tempPath, () => {});
         const full = getFullFileRecord(existing.id);
+        fastify.log.info({ fileId: existing.id, filename: originalName }, 'Duplicate file upload skipped');
         return reply.code(200).send({ duplicate: true, file: full });
       }
 
@@ -91,6 +92,7 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
 
           if (winner) {
             const full = getFullFileRecord(winner.id);
+            fastify.log.info({ fileId: winner.id, filename: originalName }, 'Concurrent duplicate file upload handled');
             return reply.code(200).send({ duplicate: true, file: full });
           }
         }
@@ -99,6 +101,7 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const full = getFullFileRecord(fileId);
+      fastify.log.info({ fileId, filename: originalName, fileType }, 'File uploaded and record created');
 
       // Phase 2: kick off background AI ingest immediately after upload
       if (full) enqueueFile(full);
@@ -168,6 +171,8 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
 
     await deleteByFileId(id);
 
+    fastify.log.info({ fileId: id }, 'File and associated records deleted');
+
     return reply.code(204).send();
   });
 
@@ -193,6 +198,8 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
       SET status = 'pending', retry_count = 0, error_message = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(id);
+
+    fastify.log.info({ fileId: id, filename: file.filename }, 'File retry initiated');
 
     enqueueFile({ ...file, status: 'pending', retry_count: 0 });
 
@@ -288,6 +295,113 @@ export async function fileRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send(full);
   });
 
+  // GET /api/files/:id/content — full extracted text for @ mention deep context
+  fastify.get('/api/files/:id/content', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const db = getDb();
+
+    const row = db.prepare(`
+      SELECT f.filename, f.file_type, m.ai_title, m.ai_summary, m.extracted_text
+      FROM files f
+      LEFT JOIN file_metadata m ON m.file_id = f.id
+      WHERE f.id = ?
+    `).get(id) as {
+      filename: string; file_type: string;
+      ai_title: string | null; ai_summary: string | null; extracted_text: string | null;
+    } | undefined;
+
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+    return reply.send({
+      file_id: id,
+      filename: row.filename,
+      file_type: row.file_type,
+      ai_title: row.ai_title ?? null,
+      ai_summary: row.ai_summary ?? null,
+      extracted_text: row.extracted_text ?? null,
+    });
+  });
+
+  // POST /api/files/create-text — save AI-generated text as a real canvas file
+  fastify.post('/api/files/create-text', async (req: FastifyRequest, reply: FastifyReply) => {
+    const body = req.body as { filename?: string; content?: string; source_file_id?: string };
+    const filename = body.filename?.trim();
+    const content  = body.content?.trim();
+    if (!filename || !content) {
+      return reply.code(400).send({ error: 'filename and content are required' });
+    }
+
+    const db = getDb();
+    const { saveTextFile } = await import('../services/storage.js');
+    const { hashString }   = await import('../services/dedup.js');
+    const { v4: uuidv4 }   = await import('uuid');
+
+    const fileId      = uuidv4();
+    const contentHash = hashString(content);
+
+    const existing = db.prepare('SELECT id FROM files WHERE content_hash = ?')
+      .get(contentHash) as { id: string } | undefined;
+    if (existing) {
+      return reply.code(200).send({ duplicate: true, file: getFullFileRecord(existing.id) });
+    }
+
+    const storagePath = await saveTextFile(content, fileId, filename);
+    const byteSize    = Buffer.byteLength(content, 'utf8');
+    const wordCount   = content.split(/\s+/).filter(Boolean).length;
+
+    db.transaction(() => {
+      db.prepare(`
+        INSERT INTO files (id, filename, storage_path, thumbnail_path, file_type, file_size, mime_type, content_hash, status)
+        VALUES (?, ?, ?, NULL, 'text', ?, 'text/plain', ?, 'complete')
+      `).run(fileId, filename, storagePath, byteSize, contentHash);
+
+      db.prepare(`
+        INSERT INTO file_metadata (file_id, ai_title, ai_summary, ai_category, extracted_text, word_count, language, processed_at)
+        VALUES (?, ?, 'AI-generated document', 'Other', ?, ?, 'en', datetime('now'))
+      `).run(fileId, filename, content, wordCount);
+
+      db.prepare(`
+        INSERT INTO files_fts (file_id, filename, ai_title, ai_summary, ai_category, tags, extracted_text)
+        VALUES (?, ?, ?, 'AI-generated document', '', '', ?)
+      `).run(fileId, filename, filename, content);
+    })();
+
+    fastify.log.info({ fileId, filename }, 'AI-generated text file created');
+    return reply.code(201).send({ duplicate: false, file: getFullFileRecord(fileId) });
+  });
+
+  // GET /api/files/:id/raw — serve the raw file bytes (for in-app viewers)
+  fastify.get('/api/files/:id/raw', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const db = getDb();
+
+    const row = db.prepare('SELECT storage_path, mime_type, filename FROM files WHERE id = ?')
+      .get(id) as { storage_path: string; mime_type: string | null; filename: string } | undefined;
+
+    if (!row) return reply.code(404).send({ error: 'Not found' });
+    if (!fs.existsSync(row.storage_path)) return reply.code(404).send({ error: 'File not on disk' });
+
+    // Infer content-type from extension if mime_type not stored
+    const ext = path.extname(row.filename).toLowerCase();
+    const mimeMap: Record<string, string> = {
+      '.pdf':  'application/pdf',
+      '.doc':  'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.txt':  'text/plain',
+      '.md':   'text/markdown',
+      '.py':   'text/plain',
+      '.js':   'text/plain',
+      '.ts':   'text/plain',
+      '.json': 'application/json',
+      '.csv':  'text/csv',
+    };
+    const contentType = row.mime_type || mimeMap[ext] || 'application/octet-stream';
+
+    reply.header('Content-Type', contentType);
+    reply.header('Content-Disposition', `inline; filename="${row.filename}"`);
+    reply.header('Cache-Control', 'private, max-age=3600');
+    return reply.send(createReadStream(row.storage_path));
+  });
+
   // GET /api/thumbnail - serve thumbnail file by absolute path
   // The path param is the absolute path stored in SQLite thumbnail_path
   fastify.get('/api/thumbnail', async (req: FastifyRequest, reply: FastifyReply) => {
@@ -350,3 +464,4 @@ function getFullFileRecord(fileId: string): FileWithMetadata | null {
     canvas_node,
   };
 }
+

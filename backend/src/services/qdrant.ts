@@ -6,7 +6,7 @@ const QDRANT_URL = process.env.QDRANT_URL ?? 'http://127.0.0.1:6333';
 const COLLECTION = 'knowledge_base';
 const VECTOR_SIZE = 768;
 
-const qdrant = new QdrantClient({ url: QDRANT_URL });
+const qdrant = new QdrantClient({ url: QDRANT_URL, timeout: 5000 });
 
 export interface ChunkPayload {
   file_id: string;

@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { embedText } from '../services/embeddings.js';
 import { searchChunks } from '../services/qdrant.js';
-import { getDb, getSessionHistory, insertMessage, type ChatRole } from '../services/sqlite.js';
-import { streamOllamaChat, type ChatMessage } from '../services/ollama.js';
+import { getDb, getSessionHistory, insertMessage, deleteSessionMessages, type ChatRole } from '../services/sqlite.js';
+import { streamGroqChat, type ChatMessage } from '../services/groq.js';
 
 const MAX_CONTEXT_TOKENS = 6000;
 const APPROX_CHARS_PER_TOKEN = 4;
@@ -181,6 +181,23 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       promptMessages.push(...historyWindow);
       promptMessages.push({ role: 'user', content: safeQuestion });
 
+      // CORS must be set manually here because we bypass Fastify's response
+      // pipeline by writing directly to reply.raw for SSE streaming.
+      const requestOrigin = req.headers.origin ?? '';
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'tauri://localhost',
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+      ];
+      const isAllowed =
+        !requestOrigin ||
+        allowedOrigins.includes(requestOrigin) ||
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin);
+
+      reply.raw.setHeader('Access-Control-Allow-Origin', isAllowed ? (requestOrigin || '*') : 'null');
+      reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
       reply.raw.setHeader('Connection', 'keep-alive');
@@ -192,7 +209,7 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
       req.raw.on('close', () => abortController.abort());
 
       try {
-        for await (const token of streamOllamaChat(promptMessages, abortController.signal)) {
+        for await (const token of streamGroqChat(promptMessages, abortController.signal)) {
           fullResponse += token;
           reply.raw.write(`data: ${JSON.stringify({ token })}\n\n`);
         }
@@ -247,6 +264,21 @@ export async function chatRoutes(fastify: FastifyInstance): Promise<void> {
           created_at: msg.created_at,
         })),
       });
+    }
+  );
+
+  fastify.delete(
+    '/api/chat/session',
+    async (
+      req: FastifyRequest<{ Querystring: { session_id?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const sessionId = req.query.session_id?.trim();
+      if (!sessionId) {
+        return reply.status(400).send({ error: 'session_id required' });
+      }
+      const deleted = deleteSessionMessages(sessionId);
+      return reply.send({ ok: true, session_id: sessionId, deleted });
     }
   );
 }

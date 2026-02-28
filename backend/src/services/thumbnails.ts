@@ -66,7 +66,8 @@ async function generatePdfThumbnail(pdfPath: string, dest: string): Promise<stri
 
   // ── Attempt 2: pdftoppm (Poppler) ────────────────────────────────────────
   const tempPrefix = dest.replace(/\.webp$/, '_pdfframe');
-  const tempPng    = `${tempPrefix}-1.png`;
+  // With `-singlefile`, pdftoppm writes `<prefix>.png` (not `<prefix>-1.png`).
+  const tempPng    = `${tempPrefix}.png`;
   try {
     const { execa } = await import('execa');
     await execa('pdftoppm', [
@@ -102,12 +103,11 @@ async function renderPdfWithPdfjs(pdfPath: string, dest: string): Promise<string
   const { createCanvas } = await import('canvas');
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
-  // Disable worker — we're running synchronously in Node
-  pdfjs.GlobalWorkerOptions.workerSrc = '';
-
   const data = new Uint8Array(fs.readFileSync(pdfPath));
   const loadingTask = pdfjs.getDocument({
     data,
+    // Render in-process in Node; avoids external worker requirement.
+    disableWorker: true,
     // Suppress non-fatal font/cmap warnings
     verbosity: 0,
   } as any);

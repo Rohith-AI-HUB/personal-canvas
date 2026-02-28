@@ -224,10 +224,10 @@ async function runIngestPipeline(file: FileRecord): Promise<void> {
       WHERE id = ?
     `).run(file.id);
 
-    console.log(`[ingestQueue] ok ${file.filename} (${file.file_type}) -> "${title}" [${chunkCount} chunks]`);
+    console.log(`[ingestQueue] SUCCESS: ${file.filename} (${file.file_type}) -> "${title}" [${chunkCount} chunks]`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`[ingestQueue] fail ${file.filename}:`, message);
+    console.error(`[ingestQueue] ERROR: ${file.filename} failed:`, message);
 
     db.prepare(`
       UPDATE files

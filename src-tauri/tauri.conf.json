@@ -7,7 +7,7 @@
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "cd frontend && npm run dev",
-    "beforeBuildCommand": "cd backend && npm run build && cd .. && node scripts/prepare-bundle.mjs && cd frontend && npm run build"
+    "beforeBuildCommand": "cd backend && npm run build && cd .. && node scripts/prepare-node-runtime.mjs && node scripts/prepare-bundle.mjs && cd frontend && npm run build"
   },
   "app": {
     "windows": [
@@ -16,7 +16,8 @@
         "width": 800,
         "height": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "zoomHotkeysEnabled": false
       }
     ],
     "security": {
@@ -28,7 +29,8 @@
     "targets": "nsis",
     "resources": {
       "../backend/dist/**/*": "backend/dist",
-      "../backend/node_modules.zip": "node_modules.zip"
+      "../backend/node_modules.zip": "node_modules.zip",
+      "../runtime/node/**/*": "node"
     },
     "icon": [
       "icons/32x32.png",

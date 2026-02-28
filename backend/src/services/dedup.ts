@@ -14,3 +14,11 @@ export async function hashFile(filePath: string): Promise<string> {
     stream.on('error', reject);
   });
 }
+
+/**
+ * Compute SHA-256 hash of a string directly (no disk I/O).
+ * Used for deduplication of AI-generated text files.
+ */
+export function hashString(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex');
+}

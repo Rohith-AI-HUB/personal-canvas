@@ -13,6 +13,7 @@ import {
   CARD_WIDTH,
   CARD_HEIGHT,
   setRetryHandler,
+  setOpenFileHandler,
   type FileCardMeta,
 } from './FileCard';
 import { FileContextMenu, type ContextMenuAction } from './FileContextMenu';
@@ -21,6 +22,9 @@ import { ArrangeToolbar } from './ArrangeToolbar';
 import { api, type FileRecord, type FolderRecord, type NodeUpdate } from '../api';
 
 const SHAPE_UTILS = [FileCardShapeUtil];
+const AUTO_COLS = 5;
+const AUTO_START_X = 60;
+const AUTO_START_Y = 60;
 
 export function buildCardMeta(file: FileRecord): FileCardMeta {
   const meta: FileCardMeta = { fileId: file.id, tags: file.tags ?? [], status: file.status };
@@ -28,6 +32,40 @@ export function buildCardMeta(file: FileRecord): FileCardMeta {
   if (file.metadata?.ai_summary) meta.summary      = file.metadata.ai_summary;
   if (file.error_message)        meta.errorMessage = file.error_message;
   return meta;
+}
+
+async function autoArrangeFolderFiles(editor: Editor, canvasId: string): Promise<void> {
+  const cards = editor
+    .getCurrentPageShapes()
+    .filter((s: any) => s.type === 'file-card')
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  const updates: NodeUpdate[] = [];
+  cards.forEach((shape: any, i) => {
+    const col = i % AUTO_COLS;
+    const row = Math.floor(i / AUTO_COLS);
+    const x = AUTO_START_X + col * (CARD_WIDTH + 24);
+    const y = AUTO_START_Y + row * (CARD_HEIGHT + 32);
+    if (shape.x !== x || shape.y !== y) {
+      editor.updateShape({ id: shape.id, type: 'file-card', x, y } as any);
+    }
+    const fileId = shape?.meta?.fileId ?? shape?.props?.fileId;
+    if (typeof fileId === 'string' && fileId.length > 0) {
+      updates.push({
+        id: shape.id,
+        fileId,
+        canvasId,
+        x,
+        y,
+        width: shape?.props?.w ?? CARD_WIDTH,
+        height: shape?.props?.h ?? CARD_HEIGHT,
+      });
+    }
+  });
+
+  if (updates.length > 0) {
+    await api.saveCanvasNodes(updates).catch(console.error);
+  }
 }
 
 // ── Inner ─────────────────────────────────────────────────────────────────────
@@ -83,6 +121,8 @@ function FolderCanvasInner({ folder, canvasId, onRetry, onFilesChanged }: InnerP
           startPolling(file.id);
         }
       });
+
+      await autoArrangeFolderFiles(editor, canvasId);
     }
 
     restore().catch(console.error);
@@ -145,6 +185,10 @@ function FolderCanvasInner({ folder, canvasId, onRetry, onFilesChanged }: InnerP
               if (deleted.length) onFilesChanged();
             })
             .catch((err) => console.error('File delete sync failed:', err));
+        }
+
+        if (removedFileIds.length > 0) {
+          setTimeout(() => { void autoArrangeFolderFiles(editor, canvasId); }, 120);
         }
 
         const updates: NodeUpdate[] = [];
@@ -211,6 +255,42 @@ export async function uploadAndAddToFolder(
     }
 
     onFilesChanged();
+
+    // New uploads need their own polling cycle; otherwise thumbnail/status updates
+    // only appear after folder remount.
+    if (fileRecord.status !== 'complete' && fileRecord.status !== 'error') {
+      let attempts = 0;
+      const timer = setInterval(async () => {
+        attempts += 1;
+        try {
+          const { status } = await api.getFileStatus(fileRecord.id);
+          if (status !== 'complete' && status !== 'error') {
+            if (attempts >= 120) clearInterval(timer); // ~6 minutes safety cap
+            return;
+          }
+
+          clearInterval(timer);
+          const updated = await api.getFile(fileRecord.id);
+          fileStore.set(updated.id, updated);
+
+          const shape = editor.getShape(shapeId);
+          if (shape) {
+            editor.updateShape({
+              id: shapeId,
+              type: 'file-card',
+              meta: buildCardMeta(updated),
+              props: { ...(shape as any).props, _v: ((shape as any).props._v ?? 0) + 1 },
+            } as any);
+          }
+
+          onFilesChanged();
+        } catch {
+          if (attempts >= 120) clearInterval(timer);
+        }
+      }, 3000);
+    }
+
+    await autoArrangeFolderFiles(editor, canvasId);
   } catch (err) {
     console.error('Upload failed:', err);
   }
@@ -222,6 +302,7 @@ interface FolderCanvasProps {
   folder:          FolderRecord;
   onFilesChanged:  () => void;
   onMount?:        (editor: Editor) => void;
+  onOpenViewer?:   (file: FileRecord) => void;
 }
 
 interface ContextMenu {
@@ -236,12 +317,17 @@ interface Inspector {
   fileId: string;
 }
 
-export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasProps) {
+export function FolderCanvas({ folder, onFilesChanged, onMount, onOpenViewer }: FolderCanvasProps) {
   const [editor, setEditor]           = useState<Editor | null>(null);
   const editorRef                     = useRef<Editor | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null);
   const [inspector,   setInspector]   = useState<Inspector | null>(null);
   const canvasId  = `folder:${folder.id}`;
+
+  useEffect(() => {
+    setOpenFileHandler(onOpenViewer);
+    return () => setOpenFileHandler(undefined);
+  }, [onOpenViewer]);
 
   const handleRetry = useCallback(async (fileId: string) => {
     try {
@@ -400,6 +486,7 @@ export function FolderCanvas({ folder, onFilesChanged, onMount }: FolderCanvasPr
 
     ed.registerExternalContentHandler('url',  async () => {});
     ed.registerExternalContentHandler('text', async () => {});
+
   }, [folder.id, canvasId, onFilesChanged, onMount]);
 
   const handleDomDrop = useCallback(async (e: DragEvent<HTMLDivElement>) => {

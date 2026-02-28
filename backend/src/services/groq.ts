@@ -117,6 +117,45 @@ function isValidCategory(value: unknown): value is AICategory {
 }
 
 // ─────────────────────────────────────────────
+// Streaming Chat via Groq
+// ─────────────────────────────────────────────
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+const DEFAULT_CHAT_MODEL = process.env.GROQ_CHAT_MODEL?.trim() || 'llama-3.3-70b-versatile';
+
+/**
+ * Stream a chat completion from Groq.
+ * Yields string tokens as they arrive.
+ * Respects the AbortSignal for client disconnects.
+ */
+export async function* streamGroqChat(
+  messages: ChatMessage[],
+  signal?: AbortSignal
+): AsyncGenerator<string> {
+  const client = getClient();
+
+  const stream = await client.chat.completions.create(
+    {
+      model: DEFAULT_CHAT_MODEL,
+      messages,
+      stream: true,
+      max_tokens: 2048,
+      temperature: 0.7,
+    },
+    { signal }
+  );
+
+  for await (const chunk of stream) {
+    const token = chunk.choices[0]?.delta?.content;
+    if (token) yield token;
+  }
+}
+
+// ─────────────────────────────────────────────
 // Whisper Transcription
 // ─────────────────────────────────────────────
 export async function transcribeAudio(audioPath: string): Promise<string> {

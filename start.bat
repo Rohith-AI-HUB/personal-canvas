@@ -1,25 +1,46 @@
 @echo off
+setlocal enabledelayedexpansion
 echo Starting Personal AI Knowledge Canvas...
 
 :: Start Qdrant in the background
-echo [1/3] Starting Qdrant vector database...
+echo [1/4] Starting Qdrant vector database...
 docker compose up -d qdrant 2>nul
 if errorlevel 1 (
   echo WARNING: Docker/Qdrant not available. Vector search will be disabled.
 )
 
-:: Wait briefly for Qdrant to initialize
-timeout /t 2 /nobreak >nul
+:: Wait for Qdrant to be healthy (up to 30s)
+echo [2/4] Waiting for Qdrant to be ready...
+set QDRANT_READY=0
+for /L %%i in (1,1,15) do (
+  if !QDRANT_READY!==0 (
+    curl -sf http://127.0.0.1:6333/readyz >nul 2>&1 && set QDRANT_READY=1
+    if !QDRANT_READY!==0 timeout /t 2 /nobreak >nul
+  )
+)
+if !QDRANT_READY!==1 (
+  echo   Qdrant is ready.
+) else (
+  echo   WARNING: Qdrant did not respond in time. Continuing anyway.
+)
 
-:: Start backend
-echo [2/3] Starting backend server...
-start "PAKC Backend" cmd /k "cd /d %~dp0backend && npm run dev"
+:: Build backend (fast incremental compile, ~5s)
+echo [3/4] Building backend...
+cd /d %~dp0backend
+call npm run build >nul 2>&1
+if errorlevel 1 (
+  echo WARNING: Build failed, attempting to use existing dist...
+)
+cd /d %~dp0
 
-:: Wait for backend to be ready
+:: Start backend using compiled JS (fast: no tsx transpilation overhead)
+echo [4/4] Starting backend and frontend servers...
+start "PAKC Backend" cmd /k "cd /d %~dp0backend && node dist/server.js"
+
+:: Give backend a moment to bind its port
 timeout /t 3 /nobreak >nul
 
 :: Start frontend
-echo [3/3] Starting frontend dev server...
 start "PAKC Frontend" cmd /k "cd /d %~dp0frontend && npm run dev"
 
 echo.

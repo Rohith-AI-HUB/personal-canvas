@@ -6,6 +6,7 @@ import {
   type RecordProps,
   T,
 } from '@tldraw/tldraw';
+import { useState, useEffect, useCallback } from 'react';
 import type { FileRecord, FileStatus } from '../api';
 
 // ── Shape types ──────────────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ export function FileCardComponent({ file, width, height, shapeMeta, onRetry }: F
         userSelect: 'none',
         position: 'relative',
         cursor: 'default',
+        transition: 'box-shadow 180ms ease, border-color 180ms ease, transform 180ms ease',
         boxShadow: isHighlit
           ? `0 0 0 2.5px ${palette.color}, 0 8px 28px rgba(20,15,10,0.14)`
           : '0 1px 3px rgba(20,15,10,0.05), 0 4px 14px rgba(20,15,10,0.09)',
@@ -238,10 +240,30 @@ function CoverArea({
   palette:      typeof TYPE_PALETTE[keyof typeof TYPE_PALETTE];
   fileType:     FileRecord['file_type'];
 }) {
-  if (hasCover) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  // Reset failure state when the thumbnail URL changes (new file or re-upload)
+  useEffect(() => {
+    setImgFailed(false);
+    setRetryKey(k => k + 1);
+  }, [thumbnailUrl]);
+
+  const handleError = useCallback(() => {
+    setImgFailed(true);
+    // Auto-retry after 4 seconds — backend might still be starting up
+    const timer = setTimeout(() => {
+      setImgFailed(false);
+      setRetryKey(k => k + 1);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (hasCover && !imgFailed) {
     // Real cover: thumbnail fills the entire card
     return (
       <img
+        key={retryKey}
         src={thumbnailUrl!}
         alt=""
         style={{
@@ -253,15 +275,12 @@ function CoverArea({
           objectPosition: 'center top',
           display: 'block',
         }}
-        onError={(e) => {
-          // If image fails to load, hide it — the gradient fallback underneath shows
-          (e.target as HTMLImageElement).style.display = 'none';
-        }}
+        onError={handleError}
       />
     );
   }
 
-  // No cover: light gradient fill + centered icon
+  // No cover or failed load: light gradient fill + centered icon
   return (
     <div
       style={{
@@ -423,11 +442,18 @@ export function setRetryHandler(fn: (fileId: string) => void) {
   onFileRetry = fn;
 }
 
+export let onOpenFile: ((file: FileRecord) => void) | undefined;
+export function setOpenFileHandler(fn?: (file: FileRecord) => void) {
+  onOpenFile = fn;
+}
+
 // ── tldraw Shape Util ────────────────────────────────────────────────────────
 
 export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
   static override type  = 'file-card' as const;
   static override props = fileCardShapeProps;
+
+  override canEdit = () => false;
 
   override getDefaultProps(): FileCardShapeProps {
     return { w: CARD_WIDTH, h: CARD_HEIGHT, fileId: '', _v: 0 };
@@ -486,5 +512,11 @@ export class FileCardShapeUtil extends BaseBoxShapeUtil<any> {
 
   override indicator(shape: FileCardShape) {
     return <rect width={shape.props.w} height={shape.props.h} rx={12} />;
+  }
+
+  override onDoubleClick(shape: FileCardShape) {
+    const file = fileStore.get(shape.props.fileId);
+    if (file) onOpenFile?.(file);
+    return undefined;
   }
 }

@@ -88,14 +88,23 @@ async function bootstrap(): Promise<void> {
 
   // CORS - allow Tauri webview origin and browser dev server.
   await fastify.register(cors, {
-    origin: [
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-      'tauri://localhost',
-      'http://tauri.localhost',
-      'https://tauri.localhost',
-    ],
+    origin: (origin, cb) => {
+      // Allow requests with no origin (curl, Tauri internals, same-origin)
+      if (!origin) return cb(null, true);
+      const allowed = [
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'tauri://localhost',
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+      ];
+      if (allowed.includes(origin)) return cb(null, true);
+      // In dev, also allow any localhost port (Vite picks a random port sometimes)
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+      cb(new Error(`CORS: origin '${origin}' not allowed`), false);
+    },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    credentials: true,
   });
 
   // Multipart - required for file uploads.
@@ -118,7 +127,46 @@ async function bootstrap(): Promise<void> {
   await fastify.register(chatRoutes);
   await fastify.register(folderRoutes);
 
-  fastify.get('/health', async () => ({ status: 'ok', ts: Date.now() }));
+  // Probe Qdrant with retries — Docker containers can take a few seconds to
+  // accept connections even after the port is open.
+  async function checkQdrant(): Promise<'ok' | 'offline'> {
+    const ATTEMPTS = 3;
+    const DELAY_MS = 800;
+    for (let i = 0; i < ATTEMPTS; i++) {
+      try {
+        const res = await fetch('http://127.0.0.1:6333/readyz', {
+          signal: AbortSignal.timeout(2500),
+        });
+        if (res.ok) return 'ok';
+      } catch {
+        // not ready yet
+      }
+      if (i < ATTEMPTS - 1) {
+        await new Promise(r => setTimeout(r, DELAY_MS));
+      }
+    }
+    return 'offline';
+  }
+
+  fastify.get('/health', async () => {
+    // Check Qdrant availability (retries up to 3× with 800ms gaps)
+    let qdrantStatus: 'ok' | 'offline' | 'unknown' = 'unknown';
+    try {
+      qdrantStatus = await checkQdrant();
+    } catch {
+      qdrantStatus = 'offline';
+    }
+
+    const groqKey = process.env.GROQ_API_KEY ?? '';
+    const groqConfigured = groqKey.length > 0 && groqKey !== 'your_groq_api_key_here';
+
+    return {
+      status: 'ok',
+      ts: Date.now(),
+      qdrant: qdrantStatus,
+      groq_configured: groqConfigured,
+    };
+  });
 
   await fastify.listen({ port: PORT, host: '127.0.0.1' });
   fastify.log.info(`Backend running on http://127.0.0.1:${PORT}`);

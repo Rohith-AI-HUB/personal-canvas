@@ -17,6 +17,8 @@
 - [x] Create `tsconfig.json` in `/backend`
 - [x] Create `tsconfig.json` in `/frontend` (Vite does this automatically)
 - [x] Add `.gitignore`
+- [x] **VERIFIED**: Backend builds correctly via `npm run build` (tsc)
+- [x] **VERIFIED**: Frontend builds correctly via `npm run build` (vite build)
 - [ ] Configure `tauri.conf.json` — allow `http` for localhost, declare `/storage` path in allowlist *(defer: not needed until Tauri packaging)*
 
 ### Backend — SQLite (P0)
@@ -106,24 +108,24 @@
 
 ---
 
-## Phase 2 — AI Ingest Pipeline  ← NEXT
+## Phase 2 — AI Ingest Pipeline ✅ COMPLETE
 
 ### Groq Integration
-- [ ] Create `/backend/src/services/groq.ts`
-- [ ] Implement `getAIMetadata(fileType, content): Promise<AIMetadata>` using `llama-3.1-70b-versatile`
-- [ ] Use JSON mode / response_format enforcement
-- [ ] Wrap JSON parse in try/catch with fallback schema (title=filename, summary=null, tags=[], category='Other')
-- [ ] Implement `transcribeAudio(audioPath): Promise<string>` using Groq Whisper API (`whisper-large-v3-turbo`)
-- [ ] Load `GROQ_API_KEY` from `.env` via `dotenv`
+- [x] Create `/backend/src/services/groq.ts`
+- [x] Implement `getAIMetadata(fileType, content): Promise<AIMetadata>` using `llama-3.1-70b-versatile`
+- [x] Use JSON mode / response_format enforcement
+- [x] Wrap JSON parse in try/catch with fallback schema (title=filename, summary=null, tags=[], category='Other')
+- [x] Implement `transcribeAudio(audioPath): Promise<string>` using Groq Whisper API (`whisper-large-v3-turbo`)
+- [x] Load `GROQ_API_KEY` from `.env` via `dotenv`
 
 ### Deepseek Coder Integration (Local via Ollama)
-- [ ] Create `/backend/src/services/deepseek.ts`
-- [ ] Implement `summarizeCode(content, filename): Promise<string>` via Ollama `deepseek-coder:1.3b`
-- [ ] Extract function/class names and top-level comments as structured metadata
+- [x] Create `/backend/src/services/deepseek.ts`
+- [x] Implement `summarizeCode(content, filename): Promise<string>` via Ollama `deepseek-coder:1.3b`
+- [x] Extract function/class names and top-level comments as structured metadata
 
 ### Content Extraction
-- [ ] Create `/backend/src/services/ingest.ts`
-- [ ] Implement `extractContent(file): Promise<string>` dispatcher by file type:
+- [x] Create `/backend/src/services/ingest.ts`
+- [x] Implement `extractContent(file): Promise<string>` dispatcher by file type:
   - PDF: `pdfjs-dist` text extraction; fallback Tesseract.js OCR if no text layer
   - Image: Tesseract.js OCR + Groq short caption
   - Video: ffmpeg audio strip → Groq Whisper transcription
@@ -132,99 +134,99 @@
   - Text/Markdown: read raw content directly
 
 ### Ingest Queue (P1)
-- [ ] Create `/backend/src/queue/ingestQueue.ts`
-- [ ] Configure `p-queue`: `concurrency: 1`, `intervalCap: 1`, `interval: 2500`
-- [ ] Implement `runIngestPipeline(file)` with full status state machine:
+- [x] Create `/backend/src/queue/ingestQueue.ts`
+- [x] Configure `p-queue`: `concurrency: 1`, `intervalCap: 1`, `interval: 2500`
+- [x] Implement `runIngestPipeline(file)` with full status state machine:
   - `pending → processing → complete`
   - `pending → processing → error` (increment `retry_count`, store `error_message`)
   - Files with `retry_count >= 3` permanently set to `error`
-- [ ] Implement `recoverPendingJobs()` — reset `processing → pending` on boot, re-enqueue `pending` with `retry_count < 3`
-- [ ] Call `recoverPendingJobs()` in `server.ts` on startup (after `getDb()`)
-- [ ] Export `enqueueFile(file)` for use in `POST /api/files` route
+- [x] Implement `recoverPendingJobs()` — reset `processing → pending` on boot, re-enqueue `pending` with `retry_count < 3`
+- [x] Call `recoverPendingJobs()` in `server.ts` on startup (after `getDb()`)
+- [x] Export `enqueueFile(file)` for use in `POST /api/files` route
 
 ### Wire Queue into Upload Route
-- [ ] After SQLite insert in `POST /api/files`, call `enqueueFile(fileRecord)`
-- [ ] Add `POST /api/files/:id/retry` route — reset `retry_count = 0`, re-enqueue
+- [x] After SQLite insert in `POST /api/files`, call `enqueueFile(fileRecord)`
+- [x] Add `POST /api/files/:id/retry` route — reset `retry_count = 0`, re-enqueue
 
 ### Frontend — AI Metadata Display
-- [ ] Show spinner animation on status badge while `status === 'processing'`
-- [ ] Error badge clickable → `POST /api/files/:id/retry`
-- [ ] On status → `complete`: fetch updated record, update `fileStore`, trigger shape re-render to show tags + summary
+- [x] Show spinner animation on status badge while `status === 'processing'`
+- [x] Error badge clickable → `POST /api/files/:id/retry`
+- [x] On status → `complete`: fetch updated record, update `fileStore`, trigger shape re-render to show tags + summary
 
 ### Phase 2 Done Criteria
-- [ ] Drop a PDF → AI returns title, summary, category, tags within ~5 seconds
-- [ ] Drop a video → transcript generated, tags reflect content
-- [ ] Drop a code file → Deepseek Coder functional summary generated
-- [ ] Crash app mid-ingest → restart → file resumes automatically
-- [ ] Malformed AI response → `error` status, no crash, error badge shown
+- [x] Drop a PDF → AI returns title, summary, category, tags within ~5 seconds
+- [x] Drop a video → transcript generated, tags reflect content
+- [x] Drop a code file → Deepseek Coder functional summary generated
+- [x] Crash app mid-ingest → restart → file resumes automatically
+- [x] Malformed AI response → `error` status, no crash, error badge shown
 
 ---
 
-## Phase 3 — Semantic Search
+## Phase 3 — Semantic Search ✅ COMPLETE
 
 ### Qdrant Setup
-- [ ] Create `docker-compose.yml` in project root for Qdrant (port 6333, data in `/storage/db/qdrant`)
-- [ ] Create `/backend/src/services/qdrant.ts`
-- [ ] On startup: ensure `knowledge_base` collection exists (768 dimensions, Cosine distance)
-- [ ] `upsertChunks(fileId, chunks, embeddings, metadata)` with UUID v5 point IDs
-- [ ] `searchChunks(queryEmbedding, topN)` → `ScoredChunk[]`
-- [ ] `deleteByFileId(fileId)` — filter delete, call from DELETE route
+- [x] Create `docker-compose.yml` in project root for Qdrant (port 6333, data in `/storage/db/qdrant`)
+- [x] Create `/backend/src/services/qdrant.ts`
+- [x] On startup: ensure `knowledge_base` collection exists (768 dimensions, Cosine distance)
+- [x] `upsertChunks(fileId, chunks, embeddings, metadata)` with UUID v5 point IDs
+- [x] `searchChunks(queryEmbedding, topN)` → `ScoredChunk[]`
+- [x] `deleteByFileId(fileId)` — filter delete, call from DELETE route
 
 ### Embeddings
-- [ ] Create `/backend/src/services/embeddings.ts`
-- [ ] `embedText(text): Promise<number[]>` via Ollama `nomic-embed-text`
-- [ ] `chunkText(text, chunkSize=500, overlap=50): string[]` (skip chunks < 100 tokens)
-- [ ] `chunkPointId(fileId, chunkIndex): string` via UUID v5
+- [x] Create `/backend/src/services/embeddings.ts`
+- [x] `embedText(text): Promise<number[]>` via Ollama `nomic-embed-text`
+- [x] `chunkText(text, chunkSize=500, overlap=50): string[]` (skip chunks < 100 tokens)
+- [x] `chunkPointId(fileId, chunkIndex): string` via UUID v5
 
 ### Wire Embeddings into Ingest
-- [ ] After AI tagging, chunk extracted content, embed, upsert to Qdrant
-- [ ] Update SQLite status to `complete` only after Qdrant upsert succeeds
+- [x] After AI tagging, chunk extracted content, embed, upsert to Qdrant
+- [x] Update SQLite status to `complete` only after Qdrant upsert succeeds
 
 ### Search Backend
-- [ ] Create `/backend/src/routes/search.ts`
-- [ ] `GET /api/search?q=...`
-- [ ] SQLite FTS5 query fires immediately
-- [ ] In parallel: embed query → Qdrant vector search
-- [ ] Hybrid ranking: `(semantic × 0.6) + (keyword × 0.4)`, deduplicated by file ID
+- [x] Create `/backend/src/routes/search.ts`
+- [x] `GET /api/search?q=...`
+- [x] SQLite FTS5 query fires immediately
+- [x] In parallel: embed query → Qdrant vector search
+- [x] Hybrid ranking: `(semantic × 0.6) + (keyword × 0.4)`, deduplicated by file ID
 
 ### Search Frontend
-- [ ] Create `/frontend/src/components/SearchBar.tsx`
-- [ ] 300ms debounce on input
-- [ ] Keyword results render immediately; semantic results merged when ready
-- [ ] Click result → `editor.zoomToFit([nodeId])` + brief highlight
-- [ ] Filter chips: file type, date range, category, tag
+- [x] Create `/frontend/src/components/SearchBar.tsx`
+- [x] 300ms debounce on input
+- [x] Keyword results render immediately; semantic results merged when ready
+- [x] Click result → `editor.zoomToFit([nodeId])` + brief highlight
+- [x] Filter chips: file type, date range, category, tag
 
 ### Phase 3 Done Criteria
-- [ ] "neural networks" finds relevant files without that phrase in filename
-- [ ] Keyword results appear < 20ms
-- [ ] Clicking result navigates canvas to correct node
-- [ ] Deleting a file removes its Qdrant vectors
+- [x] "neural networks" finds relevant files without that phrase in filename
+- [x] Keyword results appear < 20ms
+- [x] Clicking result navigates canvas to correct node
+- [x] Deleting a file removes its Qdrant vectors
 
 ---
 
-## Phase 4 — RAG Chat
+## Phase 4 — RAG Chat ✅ COMPLETE
 
 ### Ollama Chat Integration
-- [ ] Create `/backend/src/services/ollama.ts`
-- [ ] `streamChat(messages, onChunk): Promise<void>` via Ollama `gpt-oss-120b`
-- [ ] Forward chunks via Fastify SSE
+- [x] Create `/backend/src/services/ollama.ts`
+- [x] `streamChat(messages, onChunk): Promise<void>` via Ollama `gpt-oss-120b`
+- [x] Forward chunks via Fastify SSE
 
 ### RAG Pipeline
-- [ ] Create `/backend/src/routes/chat.ts`
-- [ ] `POST /api/chat` → embed question → retrieve top 10 chunks → token-budget context assembly (max 6000 tokens) → system prompt + context + last 5 chat history → stream response
-- [ ] Store exchange in `chat_messages` with citations JSON
+- [x] Create `/backend/src/routes/chat.ts`
+- [x] `POST /api/chat` → embed question → retrieve top 10 chunks → token-budget context assembly (max 6000 tokens) → system prompt + context + last 5 chat history → stream response
+- [x] Store exchange in `chat_messages` with citations JSON
 
 ### Chat Frontend
-- [ ] Create `/frontend/src/components/ChatPanel.tsx` (collapsible sidebar)
-- [ ] Streaming text render
-- [ ] Citation chips → canvas navigation
-- [ ] Create `/frontend/src/hooks/useChat.ts`
+- [x] Create `/frontend/src/components/ChatPanel.tsx` (collapsible sidebar)
+- [x] Streaming text render
+- [x] Citation chips → canvas navigation
+- [x] Create `/frontend/src/hooks/useChat.ts`
 
 ### Phase 4 Done Criteria
-- [ ] "summarize everything I have on transformers" → cited answer from actual files
-- [ ] Citations clickable, navigate canvas to source file
-- [ ] 5+ turn conversation history maintained
-- [ ] Token budget prevents context overflow
+- [x] "summarize everything I have on transformers" → cited answer from actual files
+- [x] Citations clickable, navigate canvas to source file
+- [x] 5+ turn conversation history maintained
+- [x] Token budget prevents context overflow
 
 ---
 
@@ -260,10 +262,10 @@
 ## Ongoing / Infra
 
 - [x] `.env` in backend with `GROQ_API_KEY` placeholder
-- [ ] Add `.env.example` with all required keys: `GROQ_API_KEY`, `OLLAMA_BASE_URL`, `BACKEND_PORT`
-- [ ] Add `docker-compose.yml` for Qdrant
-- [ ] Write startup script that launches backend + Qdrant together (`start.bat` / `start.sh`)
-- [ ] Pin `tldraw` version in `package.json` (currently `^4.4.0` — remove `^` to lock)
-- [ ] Add request logging for file upload events, ingest completions, errors
+- [x] Add `.env.example` with all required keys: `GROQ_API_KEY`, `OLLAMA_BASE_URL`, `BACKEND_PORT`
+- [x] Add `docker-compose.yml` for Qdrant
+- [x] Write startup script that launches backend + Qdrant together (`start.bat` / `start.sh`)
+- [x] Pin `tldraw` version in `package.json` (currently `4.4.0`)
+- [x] Add request logging for file upload events, ingest completions, errors
 - [x] Test WAL mode under load — confirmed via integration tests
-- [ ] Clean up test artifacts (`test_files/`, `test_setup.py`, `test_phase1.mjs`) before Phase 2 or move to `/tests`
+- [x] Clean up test artifacts (test_pdf_thumb.mjs, test_upload_types.mjs, etc.)
