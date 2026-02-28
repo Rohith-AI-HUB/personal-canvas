@@ -1,50 +1,115 @@
-# Personal AI Knowledge Canvas
+# Personal Canvas
 
-A local-first desktop application for managing, understanding, and querying your personal file collection using AI.
+A local-first desktop knowledge canvas for organizing files, searching content, and chatting with your data.
 
-## Stack
+![Personal Canvas Interface](docs/images/app-interface.png)
 
-- **Frontend:** React + tldraw (infinite canvas)
-- **Desktop Shell:** Tauri (thin wrapper — window, tray, file dialogs only)
-- **Backend:** Node.js + Fastify (localhost:3001)
-- **Metadata DB:** SQLite (WAL mode, FTS5)
-- **Vector DB:** Qdrant (local Docker container)
-- **Embeddings:** nomic-embed-text via Ollama
-- **Ingest AI:** Groq API (llama-3.1-70b + Whisper)
-- **Chat AI:** gpt-oss-120b via Ollama Cloud
-- **Code AI:** Deepseek Coder 1.5b (local)
+## Features
+
+- Infinite canvas for folder-level organization
+- Drag/drop and bulk file import
+- File previews and metadata-aware cards
+- Hybrid search support (keyword + semantic when Qdrant is available)
+- Chat panel with file context
+- Desktop packaging with Tauri
+
+## Tech Stack
+
+- Frontend: React + Vite + tldraw
+- Backend: Node.js + Fastify + TypeScript
+- Desktop shell: Tauri (Rust)
+- Metadata DB: SQLite
+- Vector DB: Qdrant (Docker)
 
 ## Project Structure
 
+```text
+personal-canvas/
+|- frontend/        # React app
+|- backend/         # Fastify API + ingest/search/chat services
+|- src-tauri/       # Tauri desktop shell
+|- storage/         # Local runtime data (ignored)
+|- scripts/         # Build/packaging helper scripts
+|- docker-compose.yml
+`- start.bat
 ```
-/personal-canvas
-├── /frontend         → React app (tldraw canvas, chat panel, search)
-├── /backend          → Node.js + Fastify server
-├── /storage          → All user data (files, thumbnails, SQLite DB)
-├── /src-tauri        → Tauri Rust shell (thin)
-└── README.md
-```
-
-## Build Phases
-
-1. **Phase 1** — File drop → canvas display with thumbnails + deduplication
-2. **Phase 2** — AI ingest pipeline (tagging, summarization, transcription)
-3. **Phase 3** — Hybrid semantic + keyword search
-4. **Phase 4** — RAG chat panel with citations
-5. **Phase 5** — Polish (grouping, bulk import, keyboard shortcuts)
 
 ## Prerequisites
 
 - Node.js 20+
-- Rust (for Tauri)
-- Docker (for Qdrant)
-- Ollama installed and running locally
-- Groq API key
+- npm 10+
+- Docker Desktop (required for Qdrant/semantic search)
+- Rust toolchain + Tauri prerequisites (only for desktop build)
 
-## Critical Notes
+## Environment
 
-- SQLite WAL mode must be enabled at initialization
-- Qdrant point IDs must be UUID v5 (not arbitrary strings)
-- File deduplication via SHA-256 hash before any processing
-- Ingest queue uses p-queue with crash recovery on startup
-- Frontend communicates with backend over localhost HTTP — not Tauri IPC
+Create `backend/.env` (or project root `.env`) for your keys/settings.
+
+Typical variables used by the backend include:
+
+- `GROQ_API_KEY`
+- `OLLAMA_BASE_URL`
+- `QDRANT_URL` (defaults to `http://127.0.0.1:6333` in most setups)
+- `BACKEND_STORAGE_ROOT` (optional custom storage path)
+
+## Run In Development
+
+1. Install dependencies:
+
+```bash
+cd backend && npm install
+cd ../frontend && npm install
+```
+
+2. Start backend:
+
+```bash
+cd backend
+npm run dev
+```
+
+3. Start frontend:
+
+```bash
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+4. Open app in browser:
+
+- `http://127.0.0.1:5173`
+
+## One-Command Local Start (Windows)
+
+Use:
+
+```bat
+start.bat
+```
+
+This script attempts to:
+
+- start Qdrant via Docker
+- build backend
+- launch backend + frontend
+
+## Tauri Desktop (Optional)
+
+From project root:
+
+```bash
+npm install
+npx tauri dev
+```
+
+For release build:
+
+```bash
+npx tauri build
+```
+
+## Notes
+
+- If Docker/Qdrant is down, the app still runs but semantic search is disabled.
+- Runtime data under `storage/` is local and intentionally not committed.
+- Build artifacts (`dist/`, `target/`, `node_modules/`) are generated and can be recreated.

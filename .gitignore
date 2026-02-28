@@ -56,3 +56,7 @@ Thumbs.db
 #Test
 test_files
 *.mjs
+
+# Local generated artifacts
+output/
+tmp/
