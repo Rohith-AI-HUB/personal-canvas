@@ -1,5 +1,6 @@
 use std::fs;
 use std::ffi::OsString;
+use std::io;
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -110,6 +111,70 @@ fn wait_for_port(port: u16, attempts: u32, delay_ms: u64) -> bool {
     std::thread::sleep(Duration::from_millis(delay_ms));
   }
   false
+}
+
+/// Unzip node_modules.zip into the resource dir beside backend/dist.
+/// Only runs once — skips if node_modules folder already exists.
+fn ensure_node_modules_unpacked(app: &AppHandle) {
+  // Where the zip is stored as a bundled resource
+  let zip_path = match app.path().resolve("node_modules.zip", BaseDirectory::Resource) {
+    Ok(p) if p.exists() => p,
+    _ => {
+      log::info!("node_modules.zip not found in resources (dev mode or already extracted)");
+      return;
+    }
+  };
+
+  // Extract next to the backend/dist resource folder
+  let backend_res = match app.path().resolve("backend", BaseDirectory::Resource) {
+    Ok(p) => p,
+    Err(e) => {
+      log::warn!("Could not resolve backend resource dir: {e}");
+      return;
+    }
+  };
+
+  let node_modules_dest = backend_res.join("node_modules");
+
+  // Already extracted — skip
+  if node_modules_dest.exists() {
+    log::info!("node_modules already unpacked at {:?}", node_modules_dest);
+    return;
+  }
+
+  log::info!("Unpacking node_modules.zip — first launch, please wait...");
+
+  let result = (|| -> io::Result<()> {
+    let file = fs::File::open(&zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)
+      .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    for i in 0..archive.len() {
+      let mut zip_file = archive.by_index(i)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+      let out_path = match zip_file.enclosed_name() {
+        Some(p) => node_modules_dest.join(p),
+        None => continue,
+      };
+
+      if zip_file.is_dir() {
+        fs::create_dir_all(&out_path)?;
+      } else {
+        if let Some(parent) = out_path.parent() {
+          fs::create_dir_all(parent)?;
+        }
+        let mut out_file = fs::File::create(&out_path)?;
+        io::copy(&mut zip_file, &mut out_file)?;
+      }
+    }
+    Ok(())
+  })();
+
+  match result {
+    Ok(()) => log::info!("node_modules unpacked successfully"),
+    Err(e) => log::error!("Failed to unpack node_modules.zip: {e}"),
+  }
 }
 
 fn start_backend(app: &AppHandle) {
@@ -232,6 +297,7 @@ pub fn run() {
       std::thread::spawn(move || {
         ensure_qdrant_running();
         let _ = wait_for_port(6333, 20, 500);
+        ensure_node_modules_unpacked(&handle); // unzip on first launch
         start_backend(&handle);
         // Wait for backend HTTP server to be ready before the UI makes API calls
         if wait_for_port(3001, 40, 500) {
